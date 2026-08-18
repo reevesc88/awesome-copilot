@@ -70,15 +70,18 @@ function collectTargets(options) {
     targets.push(...data.targets);
   }
 
+  for (const target of targets) {
+    if (!path.isAbsolute(target)) {
+      throw new Error(`Target must be an absolute path: ${target}`);
+    }
+  }
+
   const normalized = [...new Set(targets.map((target) => path.resolve(target)))];
   if (normalized.length === 0) {
     throw new Error("At least one --target or --targets-file entry is required");
   }
 
   for (const target of normalized) {
-    if (!path.isAbsolute(target)) {
-      throw new Error(`Target must be an absolute path: ${target}`);
-    }
     if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) {
       throw new Error(`Target directory does not exist: ${target}`);
     }
