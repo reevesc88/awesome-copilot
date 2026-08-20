@@ -3,12 +3,11 @@ name: 'Dependency and Security Review'
 description: 'Scheduled dependency/security review that reports visible upgrade, alert, and permission hygiene work for human follow-up.'
 labels: ['copilot-control-center', 'dependencies', 'security']
 on:
-  schedule:
-    - cron: "0 12 * * 4"
+  schedule: weekly on thursday
   workflow_dispatch: {}
 permissions:
   contents: read
-  issues: write
+  issues: read
   pull-requests: read
   security-events: read
   actions: read

@@ -3,12 +3,10 @@ name: 'CI Failure Summary'
 description: 'Scheduled or manual investigation trigger that summarizes recent failing workflow runs and recommends next debugging steps.'
 labels: ['copilot-control-center', 'ci', 'debug']
 on:
-  schedule:
-    - cron: "0 */8 * * *"
+  schedule: every 8h
   workflow_dispatch: {}
 permissions:
   contents: read
-  issues: write
   actions: read
   pull-requests: read
 engine: copilot

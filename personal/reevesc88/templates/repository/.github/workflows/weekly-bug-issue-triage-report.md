@@ -3,12 +3,11 @@ name: 'Weekly Bug and Issue Triage Report'
 description: 'Weekly triage report that groups bugs and open issues into clear next-action buckets without mutating issue state.'
 labels: ['copilot-control-center', 'triage', 'bugs']
 on:
-  schedule:
-    - cron: "30 9 * * 1"
+  schedule: weekly on monday
   workflow_dispatch: {}
 permissions:
   contents: read
-  issues: write
+  issues: read
   pull-requests: read
 engine: copilot
 tools:

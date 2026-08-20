@@ -3,12 +3,11 @@ name: 'Weekly Repository Health Report'
 description: 'Weekly maintenance report covering issues, PRs, CI, docs, and dependency posture for one repository.'
 labels: ['copilot-control-center', 'reporting', 'health']
 on:
-  schedule:
-    - cron: "0 9 * * 1"
+  schedule: weekly on monday
   workflow_dispatch: {}
 permissions:
   contents: read
-  issues: write
+  issues: read
   pull-requests: read
   actions: read
 engine: copilot

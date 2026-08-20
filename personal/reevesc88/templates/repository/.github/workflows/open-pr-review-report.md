@@ -3,12 +3,11 @@ name: 'Open Pull Request Review Report'
 description: 'Scheduled report summarizing open pull requests that need review, rebase, tests, or maintainer attention.'
 labels: ['copilot-control-center', 'pull-requests', 'review']
 on:
-  schedule:
-    - cron: "0 10 * * 2"
+  schedule: weekly on tuesday
   workflow_dispatch: {}
 permissions:
   contents: read
-  issues: write
+  issues: read
   pull-requests: read
   actions: read
 engine: copilot

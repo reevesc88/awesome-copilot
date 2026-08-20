@@ -3,12 +3,11 @@ name: 'Documentation Drift Check'
 description: 'Scheduled check that reports likely documentation drift after code or workflow changes.'
 labels: ['copilot-control-center', 'documentation']
 on:
-  schedule:
-    - cron: "0 11 * * 3"
+  schedule: weekly on wednesday
   workflow_dispatch: {}
 permissions:
   contents: read
-  issues: write
+  issues: read
   pull-requests: read
 engine: copilot
 tools:

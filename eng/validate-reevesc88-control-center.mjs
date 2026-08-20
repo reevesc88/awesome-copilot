@@ -38,6 +38,17 @@ function relative(filePath) {
   return path.relative(repoRoot, filePath).replace(/\\/g, "/");
 }
 
+function isWithin(root, candidate) {
+  const relativePath = path.relative(path.resolve(root), path.resolve(candidate));
+  return (
+    relativePath !== "" &&
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativePath)
+  );
+}
+
+
 function validateInstructions(dir) {
   const files = walk(dir, (file) => file.endsWith('.instructions.md'));
   for (const file of files) {
@@ -140,8 +151,8 @@ function validateWorkflows(dir) {
 
     const permissions = fm.permissions || {};
     for (const [scope, value] of Object.entries(permissions)) {
-      if (value === 'write' && !['issues'].includes(scope)) {
-        fail(`Workflow permission too broad (${scope}: write): ${relative(file)}`);
+      if (value === 'write') {
+        fail(`Workflow permission must use safe-outputs instead of direct write (${scope}: write): ${relative(file)}`);
       }
     }
   }
@@ -149,15 +160,99 @@ function validateWorkflows(dir) {
 
 function validateInventory() {
   const inventory = readJson(inventoryPath);
+  if (!inventory || !Array.isArray(inventory.items)) {
+    fail("Inventory must contain an items array");
+    return;
+  }
+  if (typeof inventory.sourceRoot !== "string" || inventory.sourceRoot.trim() === "") {
+    fail("Inventory sourceRoot must be a non-empty relative path");
+    return;
+  }
+
+  const sourceRoot = path.resolve(repoRoot, inventory.sourceRoot);
+  if (!isWithin(controlRoot, sourceRoot)) {
+    fail(`Inventory sourceRoot must stay within ${relative(controlRoot)}: ${inventory.sourceRoot}`);
+    return;
+  }
+  if (!fs.existsSync(sourceRoot) || !fs.statSync(sourceRoot).isDirectory()) {
+    fail(`Inventory sourceRoot directory is missing: ${inventory.sourceRoot}`);
+    return;
+  }
+
+  const allowedKinds = new Set([
+    "instruction-template",
+    "agent-template",
+    "prompt-template",
+    "skill-template",
+    "workflow-template",
+  ]);
+  const allowedMaturities = new Set(["ready", "pilot", "customize-before-enable"]);
+  const allowedScopes = new Set(["global-reusable", "repo-template"]);
+  const allowedSafety = new Set(["advisory", "mixed", "audit-only"]);
   const ids = new Set();
+  const sources = new Set();
   const destinations = new Set();
-  for (const item of inventory.items) {
-    if (ids.has(item.id)) fail(`Duplicate inventory id: ${item.id}`);
-    ids.add(item.id);
-    if (destinations.has(item.destination)) fail(`Duplicate inventory destination: ${item.destination}`);
-    destinations.add(item.destination);
-    const sourcePath = path.join(repoRoot, item.source);
-    if (!fs.existsSync(sourcePath)) fail(`Inventory source missing: ${item.source}`);
+  const validationTarget = path.join(repoRoot, ".control-center-validation-target");
+  const validationGitHubRoot = path.join(validationTarget, ".github");
+
+  for (const [index, item] of inventory.items.entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      fail(`Inventory item ${index} must be an object`);
+      continue;
+    }
+
+    const label = typeof item.id === "string" && item.id ? item.id : `item ${index}`;
+    if (typeof item.id !== "string" || !/^[a-z0-9-]+$/.test(item.id)) {
+      fail(`Invalid inventory id: ${label}`);
+    } else if (ids.has(item.id)) {
+      fail(`Duplicate inventory id: ${item.id}`);
+    } else {
+      ids.add(item.id);
+    }
+
+    if (!allowedKinds.has(item.kind)) fail(`Invalid inventory kind for ${label}: ${item.kind}`);
+    if (!allowedMaturities.has(item.maturity)) fail(`Invalid inventory maturity for ${label}: ${item.maturity}`);
+    if (!allowedScopes.has(item.scope)) fail(`Invalid inventory scope for ${label}: ${item.scope}`);
+    if (!allowedSafety.has(item.safety)) fail(`Invalid inventory safety for ${label}: ${item.safety}`);
+    if (typeof item.installByDefault !== "boolean") {
+      fail(`installByDefault must be boolean for ${label}`);
+    }
+    if (item.maturity === "customize-before-enable" && item.installByDefault !== false) {
+      fail(`Customize-before-enable item must be opt-in: ${label}`);
+    }
+
+    if (typeof item.source !== "string" || item.source.trim() === "") {
+      fail(`Missing inventory source for ${label}`);
+    } else {
+      const sourcePath = path.resolve(repoRoot, item.source);
+      if (!isWithin(sourceRoot, sourcePath)) {
+        fail(`Inventory source escapes sourceRoot for ${label}: ${item.source}`);
+      } else if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+        fail(`Inventory source missing or not a file: ${item.source}`);
+      } else {
+        sources.add(relative(sourcePath));
+      }
+    }
+
+    if (typeof item.destination !== "string" || item.destination.trim() === "") {
+      fail(`Missing inventory destination for ${label}`);
+    } else {
+      if (destinations.has(item.destination)) {
+        fail(`Duplicate inventory destination: ${item.destination}`);
+      }
+      destinations.add(item.destination);
+      const destinationPath = path.resolve(validationTarget, item.destination);
+      if (!isWithin(validationGitHubRoot, destinationPath)) {
+        fail(`Inventory destination must stay within .github for ${label}: ${item.destination}`);
+      }
+    }
+  }
+
+  for (const sourcePath of walk(sourceRoot)) {
+    const source = relative(sourcePath);
+    if (!sources.has(source)) {
+      fail(`Template file missing from inventory: ${source}`);
+    }
   }
 }
 
