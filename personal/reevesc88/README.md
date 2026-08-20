@@ -119,8 +119,8 @@ The safe default deliberately excludes the placeholder-filled main instruction t
    ```powershell
    node personal/reevesc88/scripts/sync-copilot-config.mjs --target $TargetRepo --item weekly-repository-health-report --write
    Set-Location $TargetRepo
-   gh aw compile --no-emit --strict
-   gh aw compile --strict
+   gh aw compile weekly-repository-health-report --no-emit --strict
+   gh aw compile weekly-repository-health-report --strict
    ```
 
 8. Review the target repository diff, commit on a branch, and open a draft PR. Do not enable additional schedules until the first manual `workflow_dispatch` run produces a safe report.
@@ -188,7 +188,7 @@ These are written to work across repositories after filling in obvious placehold
 
 6. Explicitly select `main-instructions` only when you are ready to fill every `{{PLACEHOLDER}}` immediately.
 7. Explicitly select workflow templates one at a time after customizing schedules, labels, permissions, and queries.
-8. In the target repo, run `gh aw compile --no-emit --strict`, then compile approved workflow sources into `.lock.yml` files.
+8. In the target repo, run `gh aw compile <selected-workflow-id> --no-emit --strict`, then `gh aw compile <selected-workflow-id> --strict` for each approved workflow source to produce its `.lock.yml` file.
 9. Commit both the workflow source `.md` and compiled `.lock.yml` on a branch.
 10. Open a **draft PR** for human review and test with `workflow_dispatch` before relying on a schedule.
 
