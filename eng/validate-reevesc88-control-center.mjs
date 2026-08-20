@@ -4,6 +4,10 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { parseFrontmatter, parseWorkflowMetadata } from "./yaml-parser.mjs";
+import {
+  assertNoSymlinkSegments,
+  resolveWithin,
+} from "../personal/reevesc88/scripts/sync-copilot-config.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,6 +50,21 @@ function isWithin(root, candidate) {
     !relativePath.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relativePath)
   );
+}
+export function resolveInventoryPath(
+  repoBase,
+  allowedRoot,
+  inventoryPathValue,
+  label,
+) {
+  const resolvedPath = resolveWithin(repoBase, inventoryPathValue, label);
+  if (!isWithin(allowedRoot, resolvedPath)) {
+    throw new Error(
+      `${label} must stay within ${path.resolve(allowedRoot)}: ${inventoryPathValue}`,
+    );
+  }
+  assertNoSymlinkSegments(allowedRoot, resolvedPath, label);
+  return resolvedPath;
 }
 
 
@@ -169,9 +188,16 @@ function validateInventory() {
     return;
   }
 
-  const sourceRoot = path.resolve(repoRoot, inventory.sourceRoot);
-  if (!isWithin(controlRoot, sourceRoot)) {
-    fail(`Inventory sourceRoot must stay within ${relative(controlRoot)}: ${inventory.sourceRoot}`);
+  let sourceRoot;
+  try {
+    sourceRoot = resolveInventoryPath(
+      repoRoot,
+      controlRoot,
+      inventory.sourceRoot,
+      "Inventory sourceRoot",
+    );
+  } catch (error) {
+    fail(error.message);
     return;
   }
   if (!fs.existsSync(sourceRoot) || !fs.statSync(sourceRoot).isDirectory()) {
@@ -224,13 +250,20 @@ function validateInventory() {
     if (typeof item.source !== "string" || item.source.trim() === "") {
       fail(`Missing inventory source for ${label}`);
     } else {
-      const sourcePath = path.resolve(repoRoot, item.source);
-      if (!isWithin(sourceRoot, sourcePath)) {
-        fail(`Inventory source escapes sourceRoot for ${label}: ${item.source}`);
-      } else if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
-        fail(`Inventory source missing or not a file: ${item.source}`);
-      } else {
-        sources.add(relative(sourcePath));
+      try {
+        const sourcePath = resolveInventoryPath(
+          repoRoot,
+          sourceRoot,
+          item.source,
+          `Inventory source for ${label}`,
+        );
+        if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+          fail(`Inventory source missing or not a file: ${item.source}`);
+        } else {
+          sources.add(relative(sourcePath));
+        }
+      } catch (error) {
+        fail(error.message);
       }
     }
 
@@ -277,7 +310,7 @@ function validateLinks() {
   }
 }
 
-function main() {
+export function main() {
   if (!fs.existsSync(controlRoot)) {
     throw new Error(`Missing control root: ${controlRoot}`);
   }
@@ -301,9 +334,15 @@ function main() {
   console.log('Control-center validation passed');
 }
 
+const isDirectRun =
+  process.argv[1] &&
+  path.resolve(process.argv[1]).toLowerCase() === __filename.toLowerCase();
+
+if (isDirectRun) {
 try {
   main();
 } catch (error) {
   console.error(error.message);
   process.exit(1);
+}
 }
