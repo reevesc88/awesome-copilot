@@ -1,0 +1,171 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  assertNoSymlinkSegments,
+  collectTargets,
+  parseArgs,
+  resolveWithin,
+  selectItems,
+} from "../personal/reevesc88/scripts/sync-copilot-config.mjs";
+
+const inventory = JSON.parse(
+  fs.readFileSync(
+    new URL("../personal/reevesc88/inventory.json", import.meta.url),
+    "utf8",
+  ),
+);
+const syncScriptPath = fileURLToPath(
+  new URL("../personal/reevesc88/scripts/sync-copilot-config.mjs", import.meta.url),
+);
+
+
+function createRepositoryFixture() {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "awesome-copilot-sync-"));
+  fs.mkdirSync(path.join(target, ".git"));
+  return target;
+}
+
+function runSync(args) {
+  return spawnSync(process.execPath, [syncScriptPath, ...args], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+}
+
+
+test("default selection excludes customize-before-enable items", () => {
+  const items = selectItems(inventory, []);
+
+  assert.ok(items.some((item) => item.id === "code-review"));
+  assert.ok(!items.some((item) => item.id === "main-instructions"));
+  assert.ok(!items.some((item) => item.kind === "workflow-template"));
+});
+
+test("default selection rejects a customize-before-enable item marked as default", () => {
+  const malformedInventory = {
+    items: [
+      {
+        id: "unsafe-default",
+        maturity: "customize-before-enable",
+        installByDefault: true,
+      },
+    ],
+  };
+
+  assert.throws(
+    () => selectItems(malformedInventory, []),
+    /Customize-before-enable item cannot be installed by default: unsafe-default/,
+  );
+});
+
+test("explicit selection can include a customize-before-enable item", () => {
+  const items = selectItems(inventory, ["main-instructions"]);
+
+  assert.deepEqual(items.map((item) => item.id), ["main-instructions"]);
+});
+
+test("unknown inventory ids are rejected", () => {
+  assert.throws(
+    () => selectItems(inventory, ["does-not-exist"]),
+    /Unknown inventory item: does-not-exist/,
+  );
+});
+
+test("target collection requires a repository root", (t) => {
+  const target = fs.mkdtempSync(path.join(os.tmpdir(), "awesome-copilot-not-repo-"));
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  assert.throws(
+    () => collectTargets({ targets: [target], items: [] }),
+    /Target must be a Git repository root/,
+  );
+});
+
+test("target collection accepts a repository root", (t) => {
+  const target = createRepositoryFixture();
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  assert.deepEqual(
+    collectTargets({ targets: [target], items: [] }),
+    [path.resolve(target)],
+  );
+});
+
+test("path resolution rejects traversal outside the approved root", () => {
+  const root = path.resolve(os.tmpdir(), "approved-root");
+
+  assert.throws(
+    () => resolveWithin(root, path.join("..", "escape.txt"), "destination"),
+    /destination must stay within/,
+  );
+});
+
+test("path guard rejects junction or symlink segments", (t) => {
+  const approvedRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "awesome-copilot-approved-"),
+  );
+  const outsideRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "awesome-copilot-outside-"),
+  );
+  t.after(() => fs.rmSync(approvedRoot, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(outsideRoot, { recursive: true, force: true }));
+
+  const linkedDirectory = path.join(approvedRoot, ".github");
+  fs.symlinkSync(
+    outsideRoot,
+    linkedDirectory,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+
+  assert.throws(
+    () =>
+      assertNoSymlinkSegments(
+        approvedRoot,
+        path.join(linkedDirectory, "copilot-instructions.md"),
+        "destination",
+      ),
+    /destination cannot include a symbolic link or junction/,
+  );
+});
+
+test("argument parsing rejects a missing option value", () => {
+  assert.throws(() => parseArgs(["--target"]), /--target requires a value/);
+});
+
+test("CLI preserves a conflicting target file unless replace is explicit", (t) => {
+  const target = createRepositoryFixture();
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+
+  const destination = path.join(target, ".github", "copilot-instructions.md");
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, "target override\n", "utf8");
+
+  const preserved = runSync([
+    "--target",
+    target,
+    "--item",
+    "main-instructions",
+    "--write",
+  ]);
+  assert.equal(preserved.status, 0, preserved.stderr);
+  assert.match(preserved.stdout, /SKIP   preserved existing target override/);
+  assert.equal(fs.readFileSync(destination, "utf8"), "target override\n");
+
+  const replaced = runSync([
+    "--target",
+    target,
+    "--item",
+    "main-instructions",
+    "--write",
+    "--replace",
+  ]);
+  assert.equal(replaced.status, 0, replaced.stderr);
+  assert.match(replaced.stdout, /WRITE  replaced after explicit --replace/);
+  assert.match(fs.readFileSync(destination, "utf8"), /Template status/);
+});
