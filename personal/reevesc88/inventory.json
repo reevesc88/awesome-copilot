@@ -13,7 +13,7 @@
       "maturity": "customize-before-enable",
       "activation": "copy into target repo and fill placeholders",
       "safety": "advisory",
-      "installByDefault": true
+      "installByDefault": false
     },
     {
       "id": "code-review",
@@ -398,7 +398,7 @@
       "maturity": "customize-before-enable",
       "activation": "copy into target repo then compile/test before enabling schedule",
       "safety": "audit-only",
-      "installByDefault": true
+      "installByDefault": false
     },
     {
       "id": "weekly-bug-issue-triage-report",
@@ -409,7 +409,7 @@
       "maturity": "customize-before-enable",
       "activation": "copy into target repo then compile/test before enabling schedule",
       "safety": "audit-only",
-      "installByDefault": true
+      "installByDefault": false
     },
     {
       "id": "open-pr-review-report",
@@ -420,7 +420,7 @@
       "maturity": "customize-before-enable",
       "activation": "copy into target repo then compile/test before enabling schedule",
       "safety": "audit-only",
-      "installByDefault": true
+      "installByDefault": false
     },
     {
       "id": "ci-failure-summary",
@@ -431,7 +431,7 @@
       "maturity": "customize-before-enable",
       "activation": "copy into target repo then compile/test before enabling schedule",
       "safety": "audit-only",
-      "installByDefault": true
+      "installByDefault": false
     },
     {
       "id": "documentation-drift-check",
@@ -442,7 +442,7 @@
       "maturity": "customize-before-enable",
       "activation": "copy into target repo then compile/test before enabling schedule",
       "safety": "audit-only",
-      "installByDefault": true
+      "installByDefault": false
     },
     {
       "id": "dependency-security-review",
@@ -453,7 +453,7 @@
       "maturity": "customize-before-enable",
       "activation": "copy into target repo then compile/test before enabling schedule",
       "safety": "audit-only",
-      "installByDefault": true
+      "installByDefault": false
     }
   ]
 }
