@@ -1,6 +1,0 @@
-interface:
-  display_name: "Awesome Copilot"
-  short_description: "Repo-specific patterns and workflows for awesome-copilot"
-  default_prompt: "Use the awesome-copilot repo skill to follow existing architecture, testing, and workflow conventions."
-policy:
-  allow_implicit_invocation: true
