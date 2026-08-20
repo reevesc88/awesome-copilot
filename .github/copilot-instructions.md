@@ -1,4 +1,4 @@
-The following instructions are only to be applied when performing a code review.
+The review checklists below apply only when performing a code review. The personal control-center overlay at the end applies whenever work touches the named control-center paths.
 
 ## README updates
 
