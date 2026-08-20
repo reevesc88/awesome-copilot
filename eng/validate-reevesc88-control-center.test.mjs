@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { resolveInventoryPath } from "./validate-reevesc88-control-center.mjs";
+import { main, resolveInventoryPath } from "./validate-reevesc88-control-center.mjs";
 
 function createInventoryFixture(t) {
   const repoRoot = fs.mkdtempSync(
@@ -96,4 +96,17 @@ test("inventory item source rejects a junction or symlink segment", (t) => {
       ),
     /Inventory source for reviewer cannot include a symbolic link or junction/,
   );
+});
+test("validator main accepts the curated control center", () => {
+  const originalLog = console.log;
+  const output = [];
+  console.log = (...values) => output.push(values.join(" "));
+
+  try {
+    main();
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(output, ["Control-center validation passed"]);
 });

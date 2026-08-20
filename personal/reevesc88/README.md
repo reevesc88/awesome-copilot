@@ -114,12 +114,12 @@ The safe default deliberately excludes the placeholder-filled main instruction t
    node personal/reevesc88/scripts/sync-copilot-config.mjs --target $TargetRepo --item main-instructions --write
    ```
 
-7. Pilot one workflow at a time. Review its schedule, labels, permissions, queries, and issue output before copying it. Then validate and compile it inside the target repository:
+7. Pilot one workflow at a time. Review its schedule, labels, permissions, queries, and issue output before copying it. Confirm GitHub Issues is enabled because the report templates create bounded issues through safe outputs. Then validate and compile the selected workflow inside the target repository:
 
    ```powershell
    node personal/reevesc88/scripts/sync-copilot-config.mjs --target $TargetRepo --item weekly-repository-health-report --write
    Set-Location $TargetRepo
-   gh aw compile weekly-repository-health-report --no-emit --strict
+   gh aw compile weekly-repository-health-report --no-emit --strict --validate
    gh aw compile weekly-repository-health-report --strict
    ```
 
@@ -188,7 +188,7 @@ These are written to work across repositories after filling in obvious placehold
 
 6. Explicitly select `main-instructions` only when you are ready to fill every `{{PLACEHOLDER}}` immediately.
 7. Explicitly select workflow templates one at a time after customizing schedules, labels, permissions, and queries.
-8. In the target repo, run `gh aw compile <selected-workflow-id> --no-emit --strict`, then `gh aw compile <selected-workflow-id> --strict` for each approved workflow source to produce its `.lock.yml` file.
+8. Confirm GitHub Issues is enabled in the target repository. Run `gh aw compile <selected-workflow-id> --no-emit --strict --validate`, then `gh aw compile <selected-workflow-id> --strict` for each approved workflow source to produce its `.lock.yml` file.
 9. Commit both the workflow source `.md` and compiled `.lock.yml` on a branch.
 10. Open a **draft PR** for human review and test with `workflow_dispatch` before relying on a schedule.
 
@@ -333,6 +333,7 @@ The verified RED/GREEN, coverage, security, and strict workflow compiler evidenc
 Copy this checklist into the target repository PR description when installing the profile.
 
 - [ ] Dry run reviewed with `sync-copilot-config.mjs`
+- [ ] GitHub Issues enabled for issue-based safe outputs
 - [ ] `{{PROJECT_NAME}}`, stack, architecture, test, and CI placeholders filled in
 - [ ] CODEOWNERS updated for `.github/`, workflows, and security-sensitive files
 - [ ] Branch protection requires human review and status checks
