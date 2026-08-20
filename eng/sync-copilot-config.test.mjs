@@ -14,6 +14,7 @@ import {
   resolveWithin,
   selectItems,
 } from "../personal/reevesc88/scripts/sync-copilot-config.mjs";
+import { parseFrontmatter } from "./yaml-parser.mjs";
 
 const inventory = JSON.parse(
   fs.readFileSync(
@@ -25,6 +26,12 @@ const syncScriptPath = fileURLToPath(
   new URL("../personal/reevesc88/scripts/sync-copilot-config.mjs", import.meta.url),
 );
 
+const dependencySecurityWorkflowPath = fileURLToPath(
+  new URL(
+    "../personal/reevesc88/templates/repository/.github/workflows/dependency-security-review.md",
+    import.meta.url,
+  ),
+);
 
 function createRepositoryFixture() {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "awesome-copilot-sync-"));
@@ -196,6 +203,48 @@ test("path guard rejects junction or symlink segments", (t) => {
   );
 });
 
+test("CLI write rejects a junctioned .github and leaves outside unchanged", (t) => {
+  const target = createRepositoryFixture();
+  const outsideRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "awesome-copilot-cli-outside-"),
+  );
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(outsideRoot, { recursive: true, force: true }));
+
+  fs.symlinkSync(
+    outsideRoot,
+    path.join(target, ".github"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+
+  const result = runSync([
+    "--target",
+    target,
+    "--item",
+    "main-instructions",
+    "--write",
+  ]);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot include a symbolic link or junction/i);
+  assert.equal(
+    fs.existsSync(path.join(outsideRoot, "copilot-instructions.md")),
+    false,
+  );
+});
+
+test("dependency security workflow exposes its promised alert sources", () => {
+  const frontmatter = parseFrontmatter(dependencySecurityWorkflowPath);
+
+  assert.equal(frontmatter.permissions["security-events"], "read");
+  assert.equal(frontmatter.permissions["vulnerability-alerts"], "read");
+  assert.deepEqual(
+    ["dependabot", "code_security", "secret_protection"].filter(
+      (toolset) => !frontmatter.tools.github.toolsets.includes(toolset),
+    ),
+    [],
+  );
+});
 test("argument parsing rejects a missing option value", () => {
   assert.throws(() => parseArgs(["--target"]), /--target requires a value/);
 });
