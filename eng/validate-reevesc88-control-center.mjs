@@ -67,6 +67,54 @@ export function resolveInventoryPath(
   return resolvedPath;
 }
 
+export function findMissingInventoryIds(inventory, markdown) {
+  if (!inventory || !Array.isArray(inventory.items)) return [];
+
+  return inventory.items
+    .map((item) => item?.id)
+    .filter((id) => typeof id === "string" && !markdown.includes(`\`${id}\``));
+}
+
+export function validateDecisionSections(markdown) {
+  const headings = new Set(
+    markdown.split(/\r?\n/).map((line) => line.trim()),
+  );
+
+  return ["Keep", "Adapt", "Reject"].filter(
+    (section) => !headings.has(`## ${section}`),
+  );
+}
+
+function validateGovernanceDocs() {
+  const inventory = readJson(inventoryPath);
+  const humanInventoryPath = path.join(controlRoot, "INVENTORY.md");
+  const overlapAuditPath = path.join(controlRoot, "docs", "ecc-overlap-audit.md");
+  const agentsPath = path.join(controlRoot, "AGENTS.md");
+
+  for (const requiredPath of [
+    agentsPath,
+    humanInventoryPath,
+    overlapAuditPath,
+  ]) {
+    if (!fs.existsSync(requiredPath) || !fs.statSync(requiredPath).isFile()) {
+      fail(`Missing governance document: ${relative(requiredPath)}`);
+    }
+  }
+
+  if (fs.existsSync(humanInventoryPath)) {
+    const humanInventory = fs.readFileSync(humanInventoryPath, "utf8");
+    for (const id of findMissingInventoryIds(inventory, humanInventory)) {
+      fail(`Human inventory missing item id: ${id}`);
+    }
+  }
+
+  if (fs.existsSync(overlapAuditPath)) {
+    const overlapAudit = fs.readFileSync(overlapAuditPath, "utf8");
+    for (const section of validateDecisionSections(overlapAudit)) {
+      fail(`ECC overlap audit missing decision section: ${section}`);
+    }
+  }
+}
 
 function validateInstructions(dir) {
   const files = walk(dir, (file) => file.endsWith('.instructions.md'));
@@ -316,6 +364,7 @@ export function main() {
   }
 
   validateInventory();
+  validateGovernanceDocs();
   validateInstructions(path.join(templateRoot, 'instructions'));
   validateAgents(path.join(templateRoot, 'agents'));
   validatePrompts(path.join(templateRoot, 'prompts'));

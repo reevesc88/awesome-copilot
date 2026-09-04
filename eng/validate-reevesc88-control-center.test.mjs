@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { main, resolveInventoryPath } from "./validate-reevesc88-control-center.mjs";
+import {
+  findMissingInventoryIds,
+  main,
+  resolveInventoryPath,
+  validateDecisionSections,
+} from "./validate-reevesc88-control-center.mjs";
 
 function createInventoryFixture(t) {
   const repoRoot = fs.mkdtempSync(
@@ -97,6 +102,29 @@ test("inventory item source rejects a junction or symlink segment", (t) => {
     /Inventory source for reviewer cannot include a symbolic link or junction/,
   );
 });
+
+test("human inventory coverage reports only undocumented item ids", () => {
+  const inventory = {
+    items: [{ id: "planner-architect" }, { id: "security-review" }],
+  };
+
+  assert.deepEqual(
+    findMissingInventoryIds(inventory, "Available: `planner-architect`."),
+    ["security-review"],
+  );
+});
+
+test("overlap audit requires Keep, Adapt, and Reject decisions", () => {
+  assert.deepEqual(
+    validateDecisionSections("# Audit\n\n## Keep\n\n## Reject\n"),
+    ["Adapt"],
+  );
+  assert.deepEqual(
+    validateDecisionSections("# Audit\n\n## Keep\n\n## Adapt\n\n## Reject\n"),
+    [],
+  );
+});
+
 test("validator main accepts the curated control center", () => {
   const originalLog = console.log;
   const output = [];

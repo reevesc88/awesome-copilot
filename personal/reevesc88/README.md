@@ -1,6 +1,6 @@
 # Reevesc88 Copilot Control Center
 
-This directory is the **source-of-truth layer** for @reevesc88's personal GitHub Copilot setup.
+This directory is the **source-of-truth layer** for @reevesc88's personal GitHub Copilot setup. Use [`INVENTORY.md`](INVENTORY.md) for the human review index and [the ECC overlap audit](docs/ecc-overlap-audit.md) for the Keep, Adapt, and Reject decisions.
 
 ## Why this lives under `personal/reevesc88/`
 
@@ -32,9 +32,14 @@ Everything else in this directory is a **template until you explicitly install i
 
 ```text
 personal/reevesc88/
+├── AGENTS.md
+├── INVENTORY.md
 ├── README.md
 ├── inventory.json
 ├── targets.example.json
+├── docs/
+│   ├── control-center-safety.tdd.md
+│   └── ecc-overlap-audit.md
 ├── scripts/
 │   └── sync-copilot-config.mjs
 └── templates/
@@ -127,7 +132,7 @@ The safe default deliberately excludes the placeholder-filled main instruction t
 
 ## Inventory
 
-The machine-readable inventory lives in [`inventory.json`](./inventory.json). It records each template's:
+The machine-readable inventory lives in [`inventory.json`](./inventory.json), and the complete human review index lives in [`INVENTORY.md`](INVENTORY.md). The validator requires the human index to name every machine inventory item. The machine file records each template's:
 
 - source path in this repository
 - default destination path in target repositories
@@ -324,6 +329,7 @@ The verified RED/GREEN, coverage, security, and strict workflow compiler evidenc
 ## Limitations
 
 - Repository files alone cannot create organization-wide Copilot policy.
+- ECC, Codex, Claude, MCP, hook, plugin, and model-routing configuration remains local runtime configuration and is not distributed by this GitHub-native profile.
 - This setup cannot automatically reconfigure unrelated repositories unless you run an explicit sync/install mechanism.
 - Workflow templates still require target-repository customization for labels, protected branch names, CI workflow names, and environment policies.
 - Model availability changes over time, so agents intentionally avoid hard-coding a model identifier.
@@ -332,6 +338,9 @@ The verified RED/GREEN, coverage, security, and strict workflow compiler evidenc
 
 Copy this checklist into the target repository PR description when installing the profile.
 
+- [ ] Control repository URL and exact source commit SHA recorded
+- [ ] Selected inventory item ids or profile recorded
+- [ ] Target base branch and intentional local deviations recorded
 - [ ] Dry run reviewed with `sync-copilot-config.mjs`
 - [ ] GitHub Issues enabled for issue-based safe outputs
 - [ ] `{{PROJECT_NAME}}`, stack, architecture, test, and CI placeholders filled in
