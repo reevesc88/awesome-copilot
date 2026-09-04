@@ -21,7 +21,9 @@
     "website:dev": "npm run website:data && npm run --prefix website dev",
     "website:build": "npm run build && npm run website:data && npm run --prefix website build",
     "website:a11y": "npm run website:build && npm run --prefix website a11y",
-    "website:preview": "npm run --prefix website preview"
+    "website:preview": "npm run --prefix website preview",
+    "control-center:test": "node --test ./eng/sync-copilot-config.test.mjs ./eng/validate-reevesc88-control-center.test.mjs",
+    "control-center:validate": "node ./eng/validate-reevesc88-control-center.mjs"
   },
   "repository": {
     "type": "git",
