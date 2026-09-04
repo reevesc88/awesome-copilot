@@ -15,7 +15,7 @@ Use this skill when you want to install part of the personal control-center into
 ## Steps
 1. Read `personal/reevesc88/inventory.json`.
 2. Run the sync script in dry-run mode first.
-3. Review creates, skips, and diffs.
+3. Review creates, skips, and line-number-only difference summaries; compare conflicting files locally when content review is needed.
 4. Only re-run with `--write` after human approval.
 5. Preserve differing target files unless there is explicit approval to replace them.
 
@@ -23,6 +23,7 @@ Use this skill when you want to install part of the personal control-center into
 - Never guess a target path.
 - Never overwrite differing files silently.
 - Never copy secrets into target repositories.
+- Treat target file contents as potentially sensitive and do not echo them into logs.
 
 ## Command
 

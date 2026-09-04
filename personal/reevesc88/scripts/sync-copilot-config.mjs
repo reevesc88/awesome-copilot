@@ -137,7 +137,7 @@ Behavior:
 - requires an explicit absolute Git repository root
 - installs only inventory items marked installByDefault when --item is omitted
 - customize-before-enable items and workflows require explicit --item selection
-- prints diffs for conflicting files
+- prints bounded line-number summaries for conflicting files without echoing contents
 - skips differing files unless --replace is provided
 `);
 }
@@ -222,16 +222,19 @@ function simpleDiff(existingText, desiredText, destPath) {
   const existingLines = existingText.split(/\r?\n/);
   const desiredLines = desiredText.split(/\r?\n/);
   const max = Math.max(existingLines.length, desiredLines.length);
-  const lines = [`--- existing ${destPath}`, `+++ desired ${destPath}`];
+  const lines = [
+    `--- existing ${destPath}`,
+    `+++ desired ${destPath}`,
+    "Content omitted from preview to avoid exposing sensitive target data.",
+  ];
 
   for (let i = 0; i < max; i += 1) {
     const before = existingLines[i];
     const after = desiredLines[i];
     if (before === after) continue;
-    if (before !== undefined) lines.push(`- ${before}`);
-    if (after !== undefined) lines.push(`+ ${after}`);
+    lines.push(`@@ line ${i + 1} differs @@`);
     if (lines.length > 60) {
-      lines.push("... diff truncated ...");
+      lines.push("... diff summary truncated ...");
       break;
     }
   }

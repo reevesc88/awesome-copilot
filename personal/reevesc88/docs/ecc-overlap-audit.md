@@ -48,7 +48,7 @@ Do not import these into the default profile:
 - provider-specific model routing or hard-coded model ids
 - hook-based enforcement that GitHub Copilot does not natively load
 - machine-specific paths or global user-directory installers
-- remote synchronizers that clone during dry run
+- remote synchronizers that clone during dry run or echo target-file contents into logs
 - scripts that automatically stage, commit, push, open pull requests, or force-replace files
 - workflow activation by default
 - generic React or Python instructions for repositories that use a different stack

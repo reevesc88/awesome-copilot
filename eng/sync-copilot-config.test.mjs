@@ -322,6 +322,25 @@ test("main handles help, dry run, create, idempotence, and replace preview", (t)
   assert.equal(fs.readFileSync(destination, "utf8"), "target override\n");
 });
 
+test("dry-run diff does not echo target or template file contents", (t) => {
+  const target = createRepositoryFixture();
+  t.after(() => fs.rmSync(target, { recursive: true, force: true }));
+  const destination = path.join(target, ".github", "copilot-instructions.md");
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, "token=do-not-log-this\n", "utf8");
+
+  const output = runMain([
+    "--target",
+    target,
+    "--item",
+    "main-instructions",
+  ]);
+
+  assert.match(output, /DIFF[\s\S]*line 1 differs/);
+  assert.doesNotMatch(output, /do-not-log-this/);
+  assert.doesNotMatch(output, /Template status/);
+});
+
 test("CLI preserves a conflicting target file unless replace is explicit", (t) => {
   const target = createRepositoryFixture();
   t.after(() => fs.rmSync(target, { recursive: true, force: true }));

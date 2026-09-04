@@ -103,7 +103,7 @@ This repository is the control center. Copying templates into another repository
    node personal/reevesc88/scripts/sync-copilot-config.mjs --target $TargetRepo
    ```
 
-4. Review every `CREATE`, `DIFF`, and `SKIP` line. Existing differing files are preserved by default.
+4. Review every `CREATE`, `DIFF`, and `SKIP` line. `DIFF` output lists changed line numbers but omits file contents to avoid leaking target data into logs; compare conflicting files locally when content review is needed. Existing differing files are preserved by default.
 
 5. After review, copy the safe default set:
 
@@ -182,7 +182,7 @@ These are written to work across repositories after filling in obvious placehold
      --target /absolute/path/to/target-repo
    ```
 
-4. Review the proposed file list and any diff output for existing files.
+4. Review the proposed file list and any line-number difference summaries for existing files. The script omits file contents from its output, so compare conflicting files locally when content review is needed.
 5. Install the safe default set only after review:
 
    ```bash
