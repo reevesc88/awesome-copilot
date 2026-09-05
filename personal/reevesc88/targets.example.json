@@ -1,0 +1,6 @@
+{
+  "targets": [
+    "/absolute/path/to/first-target-repository",
+    "/absolute/path/to/second-target-repository"
+  ]
+}
