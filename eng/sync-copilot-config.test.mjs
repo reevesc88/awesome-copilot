@@ -32,6 +32,12 @@ const dependencySecurityWorkflowPath = fileURLToPath(
     import.meta.url,
   ),
 );
+const weeklyRepositoryHealthWorkflowPath = fileURLToPath(
+  new URL(
+    "../personal/reevesc88/templates/repository/.github/workflows/weekly-repository-health-report.md",
+    import.meta.url,
+  ),
+);
 
 function createRepositoryFixture() {
   const target = fs.mkdtempSync(path.join(os.tmpdir(), "awesome-copilot-sync-"));
@@ -245,6 +251,20 @@ test("dependency security workflow exposes its promised alert sources", () => {
     [],
   );
 });
+
+test("weekly repository health workflow exposes its promised alert sources", () => {
+  const frontmatter = parseFrontmatter(weeklyRepositoryHealthWorkflowPath);
+
+  assert.equal(frontmatter.permissions["security-events"], "read");
+  assert.equal(frontmatter.permissions["vulnerability-alerts"], "read");
+  assert.deepEqual(
+    ["dependabot", "code_security", "secret_protection"].filter(
+      (toolset) => !frontmatter.tools.github.toolsets.includes(toolset),
+    ),
+    [],
+  );
+});
+
 test("argument parsing rejects a missing option value", () => {
   assert.throws(() => parseArgs(["--target"]), /--target requires a value/);
 });

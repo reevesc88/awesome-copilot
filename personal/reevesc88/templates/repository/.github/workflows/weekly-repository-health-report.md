@@ -10,6 +10,8 @@ permissions:
   issues: read
   pull-requests: read
   actions: read
+  security-events: read
+  vulnerability-alerts: read
 engine: copilot
 tools:
   github:
@@ -18,6 +20,9 @@ tools:
       - pull_requests
       - actions
       - repos
+      - dependabot
+      - code_security
+      - secret_protection
   bash: true
 safe-outputs:
   create-issue:
