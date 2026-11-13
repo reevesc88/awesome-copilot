@@ -262,10 +262,12 @@ test("CI failure summary skips duplicate issues while CI stays red", () => {
   assert.ok(frontmatter.tools.github.toolsets.includes("issues"));
   const body = fs.readFileSync(workflowPath, "utf8");
   assert.match(body, /search open issues whose title starts with `\[CI Summary\] `/);
-  // Cross-run dedup key lives in the title (create-issue.max only limits one run).
-  assert.match(body, /`\[CI Summary\] <YYYY-MM-DD> <sorted workflow\/job set>`/);
-  assert.match(body, /exactly the same title, or if its title carries the same sorted workflow\/job set/);
-  assert.match(body, /different failure set on the same UTC day is NOT a duplicate/);
+  // Cross-run dedup key is a digest of the FULL sorted set, carried in the title.
+  assert.match(body, /`\[CI Summary\] <YYYY-MM-DD> set:<digest>`/);
+  assert.match(body, /first 12 hex characters of the SHA-256/);
+  assert.match(body, /only when an open issue's title carries the same `set:<digest>`/);
+  assert.match(body, /different failure set, even on the same UTC day, has a different digest and is NOT a duplicate/);
+  assert.doesNotMatch(body, /\(\+N more\)/);
   assert.doesNotMatch(body, /same UTC day or for the same set of failing workflows and jobs, stop/);
 });
 
