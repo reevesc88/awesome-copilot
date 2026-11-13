@@ -22,7 +22,6 @@ tools:
       - issues
       - dependabot
       - code_security
-      - secret_protection
 safe-outputs:
   create-issue:
     max: 1
@@ -47,3 +46,5 @@ Create one weekly issue summarizing dependency and repository security follow-up
 ## Safety limits
 - Do not merge upgrades, rotate secrets, or change protections automatically.
 - Keep recommendations reviewable and human-approved.
+- The issue is a normal, visible issue: report counts, alert types, severities, and links only. Never copy alert payloads, code snippets, matched lines, or Actions log excerpts into it.
+- Secret-scanning alerts are out of scope for this public-output workflow; review them only through a private channel such as a repository security advisory.

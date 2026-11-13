@@ -9,6 +9,7 @@ permissions:
   contents: read
   actions: read
   pull-requests: read
+  issues: read
 engine: copilot
 tools:
   github:
@@ -16,6 +17,7 @@ tools:
       - actions
       - pull_requests
       - repos
+      - issues
 safe-outputs:
   create-issue:
     max: 1
@@ -39,7 +41,8 @@ Summarize the most important recent CI failures and recommend the safest next in
    - likely cause category (test regression, infra flake, missing secret, config drift, dependency failure, unknown)
    - safest next action
 4. If no recent failures exist, stop without creating a new issue unless manually dispatched and explicitly asked for a clean summary.
-5. When an issue is created, keep it concise and bounded.
+5. Before creating an issue, search open issues whose title starts with `[CI Summary] `. If one already exists for the same UTC day or for the same set of failing workflows and jobs, stop without creating another issue.
+6. When an issue is created, keep it concise and bounded, and include the UTC date and the failing workflow/job set in the body so later runs can detect duplicates.
 
 ## Safety limits
 - Do not rerun, cancel, or modify workflows automatically.

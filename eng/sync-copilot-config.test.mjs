@@ -239,11 +239,40 @@ test("dependency security workflow exposes its promised alert sources", () => {
   assert.equal(frontmatter.permissions["security-events"], "read");
   assert.equal(frontmatter.permissions["vulnerability-alerts"], "read");
   assert.deepEqual(
-    ["dependabot", "code_security", "secret_protection"].filter(
+    ["dependabot", "code_security"].filter(
       (toolset) => !frontmatter.tools.github.toolsets.includes(toolset),
     ),
     [],
   );
+  // Its output is a normal issue, so secret-scanning data must never feed it.
+  assert.equal(frontmatter.tools.github.toolsets.includes("secret_protection"), false);
+  const body = fs.readFileSync(dependencySecurityWorkflowPath, "utf8");
+  assert.match(body, /counts, alert types, severities, and links only/);
+  assert.match(body, /Never copy alert payloads/);
+});
+
+test("CI failure summary skips duplicate issues while CI stays red", () => {
+  const workflowPath = path.join(
+    path.dirname(dependencySecurityWorkflowPath),
+    "ci-failure-summary.md",
+  );
+  const frontmatter = parseFrontmatter(workflowPath);
+  assert.equal(frontmatter["safe-outputs"]["create-issue"].max, 1);
+  assert.ok(frontmatter.tools.github.toolsets.includes("issues"));
+  const body = fs.readFileSync(workflowPath, "utf8");
+  assert.match(body, /search open issues whose title starts with `\[CI Summary\] `/);
+  assert.match(body, /same UTC day or for the same set of failing workflows and jobs, stop/);
+});
+
+test("sync-copilot-config skill points at the control-repository script and inventory", () => {
+  const skillPath = new URL(
+    "../personal/reevesc88/templates/repository/.github/skills/sync-copilot-config/SKILL.md",
+    import.meta.url,
+  );
+  const body = fs.readFileSync(skillPath, "utf8");
+  assert.match(body, /personal\/reevesc88\/scripts\/sync-copilot-config\.mjs/);
+  assert.match(body, /personal\/reevesc88\/inventory\.json/);
+  assert.match(body, /not installed into target repositories/);
 });
 test("argument parsing rejects a missing option value", () => {
   assert.throws(() => parseArgs(["--target"]), /--target requires a value/);
