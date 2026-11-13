@@ -1,4 +1,4 @@
-The following instructions are only to be applied when performing a code review.
+The review checklists below apply only when performing a code review. The personal control-center overlay at the end applies whenever work touches the named control-center paths.
 
 ## README updates
 
@@ -69,3 +69,11 @@ The following instructions are only to be applied when performing a code review.
 - [ ] If `items` is present, each item has `path` and `kind` fields.
 - [ ] The `kind` field value is one of: `prompt`, `agent`, `instruction`, `skill`, or `hook`.
 - [ ] The plugin does not reference non-existent files.
+
+## Personal control-center overlay
+
+- Treat `personal/reevesc88/` as the source-of-truth for the personal Copilot control-center in this fork.
+- Keep root `.github/` files minimal; only activate what this repository itself needs.
+- When editing the control-center, inspect `personal/reevesc88/README.md`, `personal/reevesc88/inventory.json`, and `eng/validate-reevesc88-control-center.mjs` first.
+- After changing the control-center templates or inventory, run `npm run control-center:validate` and then `npm run build`.
+- Scheduled automation in this fork should stay audit-only or report-only unless a human explicitly approves a stronger write path.
