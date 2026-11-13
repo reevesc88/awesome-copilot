@@ -261,13 +261,21 @@ test("CI failure summary skips duplicate issues while CI stays red", () => {
   assert.equal(frontmatter["safe-outputs"]["create-issue"].max, 1);
   assert.ok(frontmatter.tools.github.toolsets.includes("issues"));
   const body = fs.readFileSync(workflowPath, "utf8");
-  assert.match(body, /list the open issues whose title starts with `\[CI Summary\] ` and read their bodies/);
+  assert.match(body, /list the open issues whose title starts with `\[CI Summary\] ` and read their raw markdown bodies/);
   // Cross-run dedup: exact match on a canonical body marker (no hashing; no shell tool).
   assert.equal(frontmatter.tools.bash, undefined);
   assert.match(body, /`<!-- ci-summary-set: <canonical set> -->`/);
-  assert.match(body, /drop duplicate pairs, sort them by plain character order, and join them with `; ` \(no trailing separator\)/);
-  assert.match(body, /only when an open issue's `ci-summary-set:` line is exactly equal to the current canonical set/);
-  assert.match(body, /Never compare titles, prefixes or partial lists/);
+  // Lossless canonical set: JSON-encoded pairs, angle brackets escaped, sorted, JSON-array join.
+  assert.match(body, /Encode each failing pair as a JSON array of two strings/);
+  assert.match(body, /replace every `<` with `\\u003c` and every `>` with `\\u003e`/);
+  assert.match(body, /Drop duplicate encoded pairs, sort them by plain character order, and join them with `,` inside one outer `\[` `\]` with no spaces/);
+  // Dedup compares the whole wrapped marker line in the raw (unrendered) body.
+  assert.match(body, /read their raw markdown bodies \(the API `body` field, not rendered text/);
+  assert.match(body, /Build the expected marker line `<!-- ci-summary-set: ` \+ canonical set \+ ` -->`/);
+  assert.match(body, /has a line exactly equal to that whole marker line, on any date/);
+  assert.doesNotMatch(body, /join them with `; `/);
+  assert.doesNotMatch(body, /line is exactly equal to the current canonical set/);
+  assert.match(body, /Never compare titles, prefixes, partial lists or the payload without its wrapper/);
   assert.doesNotMatch(body, /SHA-256|set:<digest>|\(\+N more\)/);
   assert.doesNotMatch(body, /same UTC day or for the same set of failing workflows and jobs, stop/);
 });
