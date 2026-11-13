@@ -261,7 +261,7 @@ test("CI failure summary skips duplicate issues while CI stays red", () => {
   assert.equal(frontmatter["safe-outputs"]["create-issue"].max, 1);
   assert.ok(frontmatter.tools.github.toolsets.includes("issues"));
   const body = fs.readFileSync(workflowPath, "utf8");
-  assert.match(body, /search open issues whose title starts with `\[CI Summary\] `/);
+  assert.match(body, /list the open issues whose title starts with `\[CI Summary\] ` and read their bodies/);
   // Cross-run dedup: exact match on a canonical body marker (no hashing; no shell tool).
   assert.equal(frontmatter.tools.bash, undefined);
   assert.match(body, /`<!-- ci-summary-set: <canonical set> -->`/);
