@@ -261,7 +261,7 @@ function validateInventory() {
     "workflow-template",
   ]);
   const allowedMaturities = new Set(["ready", "pilot", "customize-before-enable"]);
-  const allowedScopes = new Set(["global-reusable", "repo-template"]);
+  const allowedScopes = new Set(["global-reusable", "repo-template", "control-repo"]);
   const allowedSafety = new Set(["advisory", "mixed", "audit-only"]);
   const ids = new Set();
   const sources = new Set();
@@ -293,6 +293,9 @@ function validateInventory() {
     }
     if (item.maturity === "customize-before-enable" && item.installByDefault !== false) {
       fail(`Customize-before-enable item must be opt-in: ${label}`);
+    }
+    if (item.scope === "control-repo" && item.installByDefault !== false) {
+      fail(`Control-repo item must be opt-in: ${label}`);
     }
 
     if (typeof item.source !== "string" || item.source.trim() === "") {

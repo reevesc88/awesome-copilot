@@ -58,11 +58,16 @@ The default profile contains 34 ready, portable items: ten agents, eight topic i
 | `security-review` | Perform a security review |
 | `update-documentation` | Update documentation |
 | `repository-health-check` | Check repository health |
-| `sync-copilot-config` | Preview and copy selected templates |
 
 ## Opt-in items
 
-These seven items are `customize-before-enable` and are never selected by the default profile.
+These items are never selected by the default profile (`installByDefault: false`).
+
+### Control-repo sync skill
+
+| Item id | Why opt-in |
+| --- | --- |
+| `sync-copilot-config` | Depends on control-repo inventory and sync script; not installed into target repos by default |
 
 ### Repository-wide instruction
 

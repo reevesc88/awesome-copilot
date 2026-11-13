@@ -317,11 +317,11 @@
       "kind": "skill-template",
       "source": "personal/reevesc88/templates/repository/.github/skills/sync-copilot-config/SKILL.md",
       "destination": ".github/skills/sync-copilot-config/SKILL.md",
-      "scope": "global-reusable",
+      "scope": "control-repo",
       "maturity": "ready",
-      "activation": "copy into target repo skills directory",
+      "activation": "control-repo only; keep in reevesc88/awesome-copilot and do not install into target repos by default",
       "safety": "mixed",
-      "installByDefault": true
+      "installByDefault": false
     },
     {
       "id": "create-implementation-plan",

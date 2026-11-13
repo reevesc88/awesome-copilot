@@ -71,6 +71,7 @@ test("default selection excludes customize-before-enable items", () => {
   assert.ok(items.some((item) => item.id === "code-review"));
   assert.ok(!items.some((item) => item.id === "main-instructions"));
   assert.ok(!items.some((item) => item.kind === "workflow-template"));
+  assert.ok(!items.some((item) => item.id === "sync-copilot-config"));
 });
 
 test("default selection rejects a customize-before-enable item marked as default", () => {
@@ -269,10 +270,16 @@ test("sync-copilot-config skill points at the control-repository script and inve
     "../personal/reevesc88/templates/repository/.github/skills/sync-copilot-config/SKILL.md",
     import.meta.url,
   );
+  const item = inventory.items.find((entry) => entry.id === "sync-copilot-config");
+  assert.ok(item);
+  assert.equal(item.scope, "control-repo");
+  assert.equal(item.installByDefault, false);
   const body = fs.readFileSync(skillPath, "utf8");
+  assert.match(body, /control-repo-only/i);
   assert.match(body, /personal\/reevesc88\/scripts\/sync-copilot-config\.mjs/);
   assert.match(body, /personal\/reevesc88\/inventory\.json/);
   assert.match(body, /not installed into target repositories/);
+  assert.match(body, /never selected by the default sync profile/);
 });
 test("argument parsing rejects a missing option value", () => {
   assert.throws(() => parseArgs(["--target"]), /--target requires a value/);

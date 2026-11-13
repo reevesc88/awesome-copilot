@@ -1,6 +1,6 @@
 ---
 name: 'sync-copilot-config'
-description: 'Reusable sync copilot config operating procedure for the Reevesc88 Copilot control-center.'
+description: 'Control-repo-only sync procedure for copying selected Copilot control-center templates into explicit target repositories with dry-run-first safety.'
 ---
 
 # sync-copilot-config
@@ -9,7 +9,7 @@ description: 'Reusable sync copilot config operating procedure for the Reevesc88
 You need to copy selected control-center templates into one or more explicit target repositories.
 
 ## Where it runs
-This procedure runs from a local clone of the control repository (`reevesc88/awesome-copilot`), not from the target repository. The inventory (`personal/reevesc88/inventory.json`) and the sync script (`personal/reevesc88/scripts/sync-copilot-config.mjs`) are not installed into target repositories. If no control-repository clone is available, stop and ask for its path instead of searching the target repository.
+This skill is control-repo-only. It runs from a local clone of the control repository (`reevesc88/awesome-copilot`), not from the target repository. The inventory (`personal/reevesc88/inventory.json`) and the sync script (`personal/reevesc88/scripts/sync-copilot-config.mjs`) are not installed into target repositories and are never selected by the default sync profile. If no control-repository clone is available, stop and ask for its path instead of searching the target repository.
 
 ## Inputs
 - absolute target path(s)
