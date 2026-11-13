@@ -262,12 +262,13 @@ test("CI failure summary skips duplicate issues while CI stays red", () => {
   assert.ok(frontmatter.tools.github.toolsets.includes("issues"));
   const body = fs.readFileSync(workflowPath, "utf8");
   assert.match(body, /search open issues whose title starts with `\[CI Summary\] `/);
-  // Cross-run dedup key is a digest of the FULL sorted set, carried in the title.
-  assert.match(body, /`\[CI Summary\] <YYYY-MM-DD> set:<digest>`/);
-  assert.match(body, /first 12 hex characters of the SHA-256/);
-  assert.match(body, /only when an open issue's title carries the same `set:<digest>`/);
-  assert.match(body, /different failure set, even on the same UTC day, has a different digest and is NOT a duplicate/);
-  assert.doesNotMatch(body, /\(\+N more\)/);
+  // Cross-run dedup: exact match on a canonical body marker (no hashing; no shell tool).
+  assert.equal(frontmatter.tools.bash, undefined);
+  assert.match(body, /`<!-- ci-summary-set: <canonical set> -->`/);
+  assert.match(body, /drop duplicate pairs, sort them by plain character order, and join them with `; ` \(no trailing separator\)/);
+  assert.match(body, /only when an open issue's `ci-summary-set:` line is exactly equal to the current canonical set/);
+  assert.match(body, /Never compare titles, prefixes or partial lists/);
+  assert.doesNotMatch(body, /SHA-256|set:<digest>|\(\+N more\)/);
   assert.doesNotMatch(body, /same UTC day or for the same set of failing workflows and jobs, stop/);
 });
 
