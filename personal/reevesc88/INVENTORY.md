@@ -4,7 +4,7 @@
 
 ## Default profile
 
-The default profile contains 34 ready, portable items: ten agents, eight topic instructions, six prompts, and ten skills. It does not contain the placeholder-based main instruction or any workflow.
+The default profile contains 33 ready, portable items: ten agents, eight topic instructions, six prompts, and nine skills. It does not contain the placeholder-based main instruction or any workflow.
 
 ### Agents
 

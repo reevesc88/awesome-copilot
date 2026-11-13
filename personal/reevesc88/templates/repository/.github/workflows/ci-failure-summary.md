@@ -41,8 +41,9 @@ Summarize the most important recent CI failures and recommend the safest next in
    - likely cause category (test regression, infra flake, missing secret, config drift, dependency failure, unknown)
    - safest next action
 4. If no recent failures exist, stop without creating a new issue unless manually dispatched and explicitly asked for a clean summary.
-5. Before creating an issue, search open issues whose title starts with `[CI Summary] `. If one already exists for the same UTC day or for the same set of failing workflows and jobs, stop without creating another issue.
-6. When an issue is created, keep it concise and bounded, and include the UTC date and the failing workflow/job set in the body so later runs can detect duplicates.
+5. Build a canonical duplicate key: the UTC date (`YYYY-MM-DD`) plus the failing `workflow / job` pairs, sorted and joined with `; `. Use it as the issue title after the prefix: `[CI Summary] <YYYY-MM-DD> <sorted workflow/job set>`. A run that would exceed the title length keeps the date and as many sorted pairs as fit, then adds `(+N more)`.
+6. Before creating an issue, search open issues whose title starts with `[CI Summary] `. Stop without creating another issue if an open issue has exactly the same title, or if its title carries the same sorted workflow/job set (on any date). A different failure set on the same UTC day is NOT a duplicate. `create-issue.max: 1` only limits a single run, so this title check is the cross-run dedup.
+7. When an issue is created, keep it concise and bounded, and repeat the UTC date and the sorted failing workflow/job set in the body.
 
 ## Safety limits
 - Do not rerun, cancel, or modify workflows automatically.

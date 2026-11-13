@@ -262,7 +262,11 @@ test("CI failure summary skips duplicate issues while CI stays red", () => {
   assert.ok(frontmatter.tools.github.toolsets.includes("issues"));
   const body = fs.readFileSync(workflowPath, "utf8");
   assert.match(body, /search open issues whose title starts with `\[CI Summary\] `/);
-  assert.match(body, /same UTC day or for the same set of failing workflows and jobs, stop/);
+  // Cross-run dedup key lives in the title (create-issue.max only limits one run).
+  assert.match(body, /`\[CI Summary\] <YYYY-MM-DD> <sorted workflow\/job set>`/);
+  assert.match(body, /exactly the same title, or if its title carries the same sorted workflow\/job set/);
+  assert.match(body, /different failure set on the same UTC day is NOT a duplicate/);
+  assert.doesNotMatch(body, /same UTC day or for the same set of failing workflows and jobs, stop/);
 });
 
 test("sync-copilot-config skill points at the control-repository script and inventory", () => {
@@ -407,4 +411,13 @@ test("CLI preserves a conflicting target file unless replace is explicit", (t) =
   assert.equal(replaced.status, 0, replaced.stderr);
   assert.match(replaced.stdout, /WRITE  replaced after explicit --replace/);
   assert.match(fs.readFileSync(destination, "utf8"), /Template status/);
+});
+
+test("INVENTORY.md default-profile summary matches inventory.json", () => {
+  const defaults = inventory.items.filter((entry) => entry.installByDefault);
+  const count = (kind) => defaults.filter((entry) => entry.kind === kind).length;
+  const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+  const md = fs.readFileSync(new URL("../personal/reevesc88/INVENTORY.md", import.meta.url), "utf8");
+  const expected = `The default profile contains ${defaults.length} ready, portable items: ${words[count("agent-template")]} agents, ${words[count("instruction-template")]} topic instructions, ${words[count("prompt-template")]} prompts, and ${words[count("skill-template")]} skills.`;
+  assert.ok(md.includes(expected), `INVENTORY.md should say: ${expected}`);
 });
