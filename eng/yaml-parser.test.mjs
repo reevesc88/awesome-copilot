@@ -132,12 +132,14 @@ test("extractAgentMetadata, extractMcpServers, and extractMcpServerConfigs norma
   ]);
 });
 
-test("parseSkillMetadata collects sorted assets from recognized subdirectories and rejects incomplete frontmatter", (t) => {
+test("parseSkillMetadata collects sorted files from all subdirectories and rejects incomplete frontmatter", (t) => {
   const dir = makeTempDir(t);
   const validSkill = path.join(dir, "valid-skill");
   fs.mkdirSync(path.join(validSkill, "scripts"), { recursive: true });
   fs.mkdirSync(path.join(validSkill, "references", "nested"), { recursive: true });
   fs.mkdirSync(path.join(validSkill, "assets"), { recursive: true });
+  fs.mkdirSync(path.join(validSkill, "examples", "nested"), { recursive: true });
+  fs.mkdirSync(path.join(validSkill, "empty"), { recursive: true });
   fs.writeFileSync(
     path.join(validSkill, "SKILL.md"),
     "---\nname: valid-skill\ndescription: 'Valid skill description for testing'\n---\n# Skill\n",
@@ -147,12 +149,13 @@ test("parseSkillMetadata collects sorted assets from recognized subdirectories a
   fs.writeFileSync(path.join(validSkill, "assets", "template.json"), "{}\n", "utf8");
   fs.writeFileSync(path.join(validSkill, "references", "guide.md"), "# Guide\n", "utf8");
   fs.writeFileSync(path.join(validSkill, "references", "nested", "deep.md"), "# Deep\n", "utf8");
+  fs.writeFileSync(path.join(validSkill, "examples", "nested", "demo.mjs"), "// demo\n", "utf8");
 
   const skillMeta = parseSkillMetadata(validSkill);
   assert.deepEqual(skillMeta, {
     name: "valid-skill",
     description: "Valid skill description for testing",
-    assets: ["assets/template.json", "references/guide.md", "references/nested/deep.md", "scripts/check.mjs"],
+    assets: ["assets/template.json", "examples/nested/demo.mjs", "references/guide.md", "references/nested/deep.md", "scripts/check.mjs"],
     path: validSkill,
   });
 

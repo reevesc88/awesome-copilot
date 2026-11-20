@@ -77,6 +77,11 @@ test("validateSkillFolder reports missing SKILL.md, folder mismatch, and oversiz
   fs.writeFileSync(largeAsset, Buffer.alloc(5 * 1024 * 1024 + 1024));
   const sizeErrors = validateSkillFolder(oversizedFolder, "oversized-skill");
   assert.ok(sizeErrors.some((err) => err.includes('Bundled asset "assets/large.bin" exceeds maximum size of 5MB')));
+
+  fs.mkdirSync(path.join(oversizedFolder, "examples", "nested"), { recursive: true });
+  fs.writeFileSync(path.join(oversizedFolder, "examples", "nested", "large.bin"), Buffer.alloc(5 * 1024 * 1024 + 1024));
+  const exampleErrors = validateSkillFolder(oversizedFolder, "oversized-skill");
+  assert.ok(exampleErrors.some((err) => err.includes('Bundled asset "examples/nested/large.bin" exceeds maximum size of 5MB')));
 });
 
 test("validateSkills handles missing, empty, valid, and invalid skill roots", (t) => {

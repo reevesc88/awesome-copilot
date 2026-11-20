@@ -145,15 +145,9 @@ function parseSkillMetadata(skillPath) {
       // List bundled assets (all files except SKILL.md), recursing through subdirectories
       const getAllFiles = (dirPath, arrayOfFiles = []) => {
         const files = fs.readdirSync(dirPath);
-        const assetPaths = ['references', 'assets', 'scripts'];
-
         files.forEach((file) => {
           const filePath = path.join(dirPath, file);
-          // Recurse into recognized top-level asset dirs, and into every directory nested below them
-          if (
-            fs.statSync(filePath).isDirectory() &&
-            (dirPath !== skillPath || assetPaths.includes(file))
-          ) {
+          if (fs.statSync(filePath).isDirectory()) {
             arrayOfFiles = getAllFiles(filePath, arrayOfFiles);
           } else {
             const relativePath = path.relative(skillPath, filePath);
