@@ -175,8 +175,11 @@ test("plugin section generators sort featured first and count agents, skills, an
   const extensionsDir = path.join(root, "extensions");
   fs.mkdirSync(path.join(pluginsDir, "regular-pack"), { recursive: true });
   fs.mkdirSync(path.join(pluginsDir, "featured-board"), { recursive: true });
+  fs.mkdirSync(path.join(pluginsDir, "implicit-board"), { recursive: true });
   fs.mkdirSync(path.join(extensionsDir, "featured-board"), { recursive: true });
+  fs.mkdirSync(path.join(extensionsDir, "implicit-board"), { recursive: true });
   fs.writeFileSync(path.join(extensionsDir, "featured-board", "extension.mjs"), "export default {};\n", "utf8");
+  fs.writeFileSync(path.join(extensionsDir, "implicit-board", "extension.mjs"), "export default {};\n", "utf8");
 
   fs.writeFileSync(
     path.join(pluginsDir, "regular-pack", "plugin.json"),
@@ -209,13 +212,26 @@ test("plugin section generators sort featured first and count agents, skills, an
     "utf8",
   );
 
+  fs.writeFileSync(
+    path.join(pluginsDir, "implicit-board", "plugin.json"),
+    JSON.stringify({
+      name: "implicit-board",
+      description: "Implicit canvas plugin",
+      featured: true,
+      keywords: ["canvas"],
+    }),
+    "utf8",
+  );
+
   const pluginsOut = generatePluginsSection(pluginsDir, [], { extensionsDir });
   assert.ok(pluginsOut.indexOf("⭐ featured-board") < pluginsOut.indexOf("[regular-pack]"));
   assert.match(pluginsOut, /\[⭐ featured-board\]\(\.\.\/plugins\/featured-board\/README\.md\) \| Featured canvas plugin \| 1 items \| canvas \|/);
   assert.match(pluginsOut, /\[regular-pack\]\(\.\.\/plugins\/regular-pack\/README\.md\) \| Regular plugin \| 3 items \| ops \|/);
+  assert.match(pluginsOut, /\[⭐ implicit-board\]\(\.\.\/plugins\/implicit-board\/README\.md\) \| Implicit canvas plugin \| 1 items \| canvas \|/);
 
   const featuredOut = generateFeaturedPluginsSection(pluginsDir, { extensionsDir });
   assert.match(featuredOut, /\[featured-board\]\(plugins\/featured-board\/README\.md\)/);
+  assert.match(featuredOut, /\[implicit-board\]\(plugins\/implicit-board\/README\.md\) \| Implicit canvas plugin \| 1 items \| canvas \|/);
   assert.doesNotMatch(featuredOut, /regular-pack/);
 });
 
