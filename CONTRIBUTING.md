@@ -452,7 +452,7 @@ When modifying build, validation, or intake scripts under `eng/`, run the reposi
 npm test
 ```
 
-`npm test` runs `node --test "./eng/**/*.test.mjs"` (currently **121 unit tests across 15 test files** covering YAML/front-matter parsing, skill and plugin validation, README and website index generation, plugin materialization/marketplace output, PR risk scanning, external-plugin intake/quality gates, contributor reporting, and control-center tooling). Keep test fixtures synthetic and free of credential-like strings.
+`npm test` runs `node --test "./eng/**/*.test.mjs"` (currently **121 unit tests across 15 test files** covering YAML/front-matter parsing, skill and plugin validation, README and website index generation, plugin materialization/marketplace output, PR risk scanning, external-plugin intake/quality gates, contributor reporting, and control-center tooling). Keep test fixtures synthetic and free of credential-like strings. `npm test` requires Node.js 21 or later, because it relies on the `node --test` glob support added in Node 21 (declared in `package.json` `engines`).
 
 ## Contributor Recognition
 

@@ -149,7 +149,11 @@ function parseSkillMetadata(skillPath) {
 
         files.forEach((file) => {
           const filePath = path.join(dirPath, file);
-          if (fs.statSync(filePath).isDirectory() && assetPaths.includes(file)) {
+          // Recurse into recognized top-level asset dirs, and into every directory nested below them
+          if (
+            fs.statSync(filePath).isDirectory() &&
+            (dirPath !== skillPath || assetPaths.includes(file))
+          ) {
             arrayOfFiles = getAllFiles(filePath, arrayOfFiles);
           } else {
             const relativePath = path.relative(skillPath, filePath);

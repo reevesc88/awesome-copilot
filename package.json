@@ -4,6 +4,9 @@
   "description": "Enhance your GitHub Copilot experience with community-contributed instructions, prompts, agents, and skills.",
   "main": "./eng/update-readme.mjs",
   "private": true,
+  "engines": {
+    "node": ">=21"
+  },
   "scripts": {
     "start": "npm run build",
     "build": "node ./eng/update-readme.mjs && node ./eng/generate-marketplace.mjs",

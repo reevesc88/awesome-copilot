@@ -146,12 +146,13 @@ test("parseSkillMetadata collects sorted assets from recognized subdirectories a
   fs.writeFileSync(path.join(validSkill, "scripts", "check.mjs"), "// noop\n", "utf8");
   fs.writeFileSync(path.join(validSkill, "assets", "template.json"), "{}\n", "utf8");
   fs.writeFileSync(path.join(validSkill, "references", "guide.md"), "# Guide\n", "utf8");
+  fs.writeFileSync(path.join(validSkill, "references", "nested", "deep.md"), "# Deep\n", "utf8");
 
   const skillMeta = parseSkillMetadata(validSkill);
   assert.deepEqual(skillMeta, {
     name: "valid-skill",
     description: "Valid skill description for testing",
-    assets: ["assets/template.json", "references/guide.md", "references/nested", "scripts/check.mjs"],
+    assets: ["assets/template.json", "references/guide.md", "references/nested/deep.md", "scripts/check.mjs"],
     path: validSkill,
   });
 
