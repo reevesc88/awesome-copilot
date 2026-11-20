@@ -2,6 +2,7 @@
 
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { parseSkillMetadata } from "./yaml-parser.mjs";
 import {
   ROOT_FOLDER,
@@ -99,16 +100,16 @@ function validateSkillFolder(folderPath, folderName) {
 }
 
 // Main validation function
-function validateSkills() {
-  if (!fs.existsSync(SKILLS_DIR)) {
+function validateSkills(skillsDir = SKILLS_DIR) {
+  if (!fs.existsSync(skillsDir)) {
     console.log("No skills directory found - validation skipped");
     return true;
   }
 
   const skillFolders = fs
-    .readdirSync(SKILLS_DIR)
+    .readdirSync(skillsDir)
     .filter((file) => {
-      const filePath = path.join(SKILLS_DIR, file);
+      const filePath = path.join(skillsDir, file);
       return fs.statSync(filePath).isDirectory();
     });
 
@@ -123,7 +124,7 @@ function validateSkills() {
   const usedNames = new Set();
 
   for (const folder of skillFolders) {
-    const folderPath = path.join(SKILLS_DIR, folder);
+    const folderPath = path.join(skillsDir, folder);
     console.log(`\nValidating ${folder}...`);
 
     const errors = validateSkillFolder(folderPath, folder);
@@ -157,16 +158,25 @@ function validateSkills() {
   return !hasErrors;
 }
 
+export {
+  validateSkillDescription,
+  validateSkillFolder,
+  validateSkillName,
+  validateSkills,
+};
+
 // Run validation
-try {
-  const isValid = validateSkills();
-  if (!isValid) {
-    console.error("\n❌ Skill validation failed");
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    const isValid = validateSkills();
+    if (!isValid) {
+      console.error("\n❌ Skill validation failed");
+      process.exit(1);
+    }
+    console.log("\n🎉 Skill validation passed");
+  } catch (error) {
+    console.error(`Error during validation: ${error.message}`);
+    console.error(error.stack);
     process.exit(1);
   }
-  console.log("\n🎉 Skill validation passed");
-} catch (error) {
-  console.error(`Error during validation: ${error.message}`);
-  console.error(error.stack);
-  process.exit(1);
 }

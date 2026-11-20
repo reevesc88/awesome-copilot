@@ -33,27 +33,27 @@ function copyDirRecursive(src, dest) {
  *   ./agents/foo.md   → ROOT/agents/foo.agent.md
  *   ./skills/baz/      → ROOT/skills/baz/
  */
-function resolveSource(relPath) {
+function resolveSource(relPath, rootFolder = ROOT_FOLDER) {
   const basename = path.basename(relPath, ".md");
   if (relPath.startsWith("./agents/")) {
-    return path.join(ROOT_FOLDER, "agents", `${basename}.agent.md`);
+    return path.join(rootFolder, "agents", `${basename}.agent.md`);
   }
   if (relPath.startsWith("./skills/")) {
     // Strip trailing slash and get the skill folder name
     const skillName = relPath.replace(/^\.\/skills\//, "").replace(/\/$/, "");
-    return path.join(ROOT_FOLDER, "skills", skillName);
+    return path.join(rootFolder, "skills", skillName);
   }
   if (relPath.startsWith("./extensions/")) {
     const extensionName = relPath.replace(/^\.\/extensions\//, "").replace(/\/$/, "");
-    return path.join(ROOT_FOLDER, "extensions", extensionName);
+    return path.join(rootFolder, "extensions", extensionName);
   }
   if (relPath.startsWith("./hooks/")) {
-    return path.join(ROOT_FOLDER, "hooks", relPath.replace(/^\.\/hooks\//, ""));
+    return path.join(rootFolder, "hooks", relPath.replace(/^\.\/hooks\//, ""));
   }
   return null;
 }
 
-function readExtensionReferences(metadata, pluginName) {
+function readExtensionReferences(metadata, pluginName, extensionsDir = EXTENSIONS_DIR) {
   const extensionData = metadata.extensions?.[AWESOME_COPILOT_NAMESPACE];
   const directories = extensionData?.extensions ?? [];
   if (!Array.isArray(directories) ||
@@ -64,22 +64,26 @@ function readExtensionReferences(metadata, pluginName) {
   const names = new Set(directories.map((entry) =>
     entry.replace(/^\.\/extensions\//, "").replace(/\/$/, "")
   ));
-  if (fs.existsSync(path.join(EXTENSIONS_DIR, pluginName, "extension.mjs"))) {
+  if (fs.existsSync(path.join(extensionsDir, pluginName, "extension.mjs"))) {
     names.add(pluginName);
   }
 
   return [...names].sort();
 }
 
-export function materializePlugins() {
+export { resolveSource };
+
+export function materializePlugins({ rootFolder = ROOT_FOLDER } = {}) {
+  const pluginsDir = path.join(rootFolder, "plugins");
+  const extensionsDir = path.join(rootFolder, "extensions");
   console.log("Materializing plugin files...\n");
 
-  if (!fs.existsSync(PLUGINS_DIR)) {
-    console.error(`Error: Plugins directory not found at ${PLUGINS_DIR}`);
+  if (!fs.existsSync(pluginsDir)) {
+    console.error(`Error: Plugins directory not found at ${pluginsDir}`);
     process.exit(1);
   }
 
-  const pluginDirs = fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })
+  const pluginDirs = fs.readdirSync(pluginsDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name)
     .sort();
@@ -91,7 +95,7 @@ export function materializePlugins() {
   let errors = 0;
 
   for (const dirName of pluginDirs) {
-    const pluginPath = path.join(PLUGINS_DIR, dirName);
+    const pluginPath = path.join(pluginsDir, dirName);
     const pluginJsonPath = path.join(pluginPath, "plugin.json");
 
     if (!fs.existsSync(pluginJsonPath)) {
@@ -116,7 +120,7 @@ export function materializePlugins() {
       const entries = composition[field];
       if (!Array.isArray(entries)) continue;
       for (const relPath of entries) {
-        const src = resolveSource(relPath);
+        const src = resolveSource(relPath, rootFolder);
         if (!src) {
           console.warn(`  ⚠ ${pluginName}: Unknown ${field} path format: ${relPath}`);
           warnings++;
@@ -140,10 +144,10 @@ export function materializePlugins() {
     }
 
     // Process reusable extensions declared in the repository namespace.
-    const extensionRefs = readExtensionReferences(metadata, pluginName);
+    const extensionRefs = readExtensionReferences(metadata, pluginName, extensionsDir);
     for (const extensionName of extensionRefs) {
       const relPath = `./extensions/${extensionName}`;
-      const src = resolveSource(relPath);
+      const src = resolveSource(relPath, rootFolder);
       if (!src) {
         console.warn(`  ⚠ ${pluginName}: Unknown extension path format: ${relPath}`);
         warnings++;

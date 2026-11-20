@@ -1798,7 +1798,22 @@ async function main() {
   console.log(`\n✓ All data written to website/public/data/`);
 }
 
-main().catch((err) => {
-  console.error("Error generating website data:", err);
-  process.exit(1);
-});
+export {
+  extractTitle,
+  formatDisplayName,
+  generateExtensionsData,
+  generateSearchIndex,
+  getImageMimeType,
+  hasExtensionEntryPoint,
+  joinRepoPath,
+  normalizeAuthor,
+  normalizeRepoRelativePath,
+  pickAssetFile,
+};
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main().catch((err) => {
+    console.error("Error generating website data:", err);
+    process.exit(1);
+  });
+}
