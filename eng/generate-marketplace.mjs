@@ -65,23 +65,31 @@ function collectLocalPluginsFromRoot(rootDir, sourcePrefix, includeEntry = () =>
 /**
  * Generate marketplace.json from plugin directories
  */
-export function generateMarketplace() {
+export function generateMarketplace({
+  pluginsDir = PLUGINS_DIR,
+  marketplaceFile = MARKETPLACE_FILE,
+  externalPluginsFile,
+} = {}) {
   console.log("Generating marketplace.json...");
 
-  if (!fs.existsSync(PLUGINS_DIR)) {
-    console.error(`Error: Plugins directory (${PLUGINS_DIR}) was not found`);
+  if (!fs.existsSync(pluginsDir)) {
+    console.error(`Error: Plugins directory (${pluginsDir}) was not found`);
     process.exit(1);
   }
 
-  const plugins = collectLocalPluginsFromRoot(PLUGINS_DIR, "plugins");
+  const plugins = collectLocalPluginsFromRoot(pluginsDir, "plugins");
 
   console.log(`Found ${plugins.length} local plugin manifests`);
 
   // Read external plugins and merge as-is
-  const { plugins: externalPlugins, errors: externalErrors, warnings: externalWarnings } = readExternalPlugins({
+  const externalOptions = {
     localPluginNames: plugins.map((plugin) => plugin.name),
     policy: "marketplace",
-  });
+  };
+  if (externalPluginsFile !== undefined) {
+    externalOptions.filePath = externalPluginsFile;
+  }
+  const { plugins: externalPlugins, errors: externalErrors, warnings: externalWarnings } = readExternalPlugins(externalOptions);
   externalWarnings.forEach((warning) => console.warn(`Warning: ${warning}`));
   if (externalErrors.length > 0) {
     externalErrors.forEach((error) => console.error(`Error: ${error}`));
@@ -115,16 +123,16 @@ export function generateMarketplace() {
   };
 
   // Ensure directory exists
-  const marketplaceDir = path.dirname(MARKETPLACE_FILE);
+  const marketplaceDir = path.dirname(marketplaceFile);
   if (!fs.existsSync(marketplaceDir)) {
     fs.mkdirSync(marketplaceDir, { recursive: true });
   }
 
   // Write marketplace.json
-  fs.writeFileSync(MARKETPLACE_FILE, JSON.stringify(marketplace, null, 2) + "\n");
+  fs.writeFileSync(marketplaceFile, JSON.stringify(marketplace, null, 2) + "\n");
 
   console.log(`\n✓ Successfully generated marketplace.json with ${plugins.length} plugins (${plugins.length - externalPlugins.length} local, ${externalPlugins.length} external)`);
-  console.log(`  Location: ${MARKETPLACE_FILE}`);
+  console.log(`  Location: ${marketplaceFile}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -4,6 +4,9 @@
   "description": "Enhance your GitHub Copilot experience with community-contributed instructions, prompts, agents, and skills.",
   "main": "./eng/update-readme.mjs",
   "private": true,
+  "engines": {
+    "node": ">=21"
+  },
   "scripts": {
     "start": "npm run build",
     "build": "node ./eng/update-readme.mjs && node ./eng/generate-marketplace.mjs",
@@ -22,6 +25,7 @@
     "website:build": "npm run build && npm run website:data && npm run --prefix website build",
     "website:a11y": "npm run website:build && npm run --prefix website a11y",
     "website:preview": "npm run --prefix website preview",
+    "test": "node --test \"./eng/**/*.test.mjs\"",
     "control-center:test": "node --test ./eng/sync-copilot-config.test.mjs ./eng/validate-reevesc88-control-center.test.mjs",
     "control-center:validate": "node ./eng/validate-reevesc88-control-center.mjs"
   },

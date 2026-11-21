@@ -116,7 +116,7 @@ function getExtensionFolderNames() {
     .sort();
 }
 
-function validateSpecPaths(plugin) {
+function validateSpecPaths(plugin, { rootFolder = ROOT_FOLDER } = {}) {
   const errors = [];
   const specs = {
     agents: { prefix: "./agents/", suffix: ".md", repoDir: "agents", repoSuffix: ".agent.md" },
@@ -158,18 +158,18 @@ function validateSpecPaths(plugin) {
       // Validate the source file exists at repo root
       const basename = p.slice(spec.prefix.length, p.length - spec.suffix.length);
       if (field === "skills") {
-        const skillDir = path.join(ROOT_FOLDER, spec.repoDir, basename);
+        const skillDir = path.join(rootFolder, spec.repoDir, basename);
         const skillFile = path.join(skillDir, spec.repoFile);
         if (!fs.existsSync(skillFile)) {
           errors.push(`extensions["${AWESOME_COPILOT_NAMESPACE}"].${field}[${i}] source not found: ${spec.repoDir}/${basename}/SKILL.md`);
         }
       } else {
         const srcFile = spec.repoFile
-          ? path.join(ROOT_FOLDER, spec.repoDir, basename, spec.repoFile)
-          : path.join(ROOT_FOLDER, spec.repoDir, basename + spec.repoSuffix);
+          ? path.join(rootFolder, spec.repoDir, basename, spec.repoFile)
+          : path.join(rootFolder, spec.repoDir, basename + spec.repoSuffix);
         if (!fs.existsSync(srcFile)) {
           errors.push(`extensions["${AWESOME_COPILOT_NAMESPACE}"].${field}[${i}] source not found`);
-        } else if (field === "hooks" && !fs.existsSync(path.join(ROOT_FOLDER, spec.repoDir, basename, "hooks.json"))) {
+        } else if (field === "hooks" && !fs.existsSync(path.join(rootFolder, spec.repoDir, basename, "hooks.json"))) {
           errors.push(`extensions["${AWESOME_COPILOT_NAMESPACE}"].${field}[${i}] source not found: ${spec.repoDir}/${basename}/hooks.json`);
         }
       }
@@ -178,7 +178,7 @@ function validateSpecPaths(plugin) {
   return errors;
 }
 
-function validateExtensionReferences(plugin, pluginDir) {
+function validateExtensionReferences(plugin, pluginDir, { extensionsDir = EXTENSIONS_DIR } = {}) {
   const errors = [];
   const directories = plugin.extensions?.[AWESOME_COPILOT_NAMESPACE]?.extensions;
   if (directories === undefined) {
@@ -204,7 +204,7 @@ function validateExtensionReferences(plugin, pluginDir) {
       errors.push(`extensions["${AWESOME_COPILOT_NAMESPACE}"].extensions[${index}] must be a valid ./extensions/<name> path`);
       continue;
     }
-    if (!fs.existsSync(path.join(EXTENSIONS_DIR, name, "extension.mjs"))) {
+    if (!fs.existsSync(path.join(extensionsDir, name, "extension.mjs"))) {
       errors.push(`extensions["${AWESOME_COPILOT_NAMESPACE}"].extensions[${index}] source not found: extensions/${name}`);
     }
   }
@@ -239,18 +239,21 @@ function validateCompositionNamespace(plugin) {
   return errors;
 }
 
-function validatePlugin(folderName) {
-  const pluginDir = path.join(PLUGINS_DIR, folderName);
+function validatePlugin(
+  folderName,
+  { pluginsDir = PLUGINS_DIR, extensionsDir = EXTENSIONS_DIR, rootFolder = ROOT_FOLDER } = {}
+) {
+  const pluginDir = path.join(pluginsDir, folderName);
   const errors = [];
   let parsedPlugin = null;
-  const extensionDir = path.join(EXTENSIONS_DIR, folderName);
+  const extensionDir = path.join(extensionsDir, folderName);
   const isExtensionPlugin = fs.existsSync(path.join(extensionDir, "extension.mjs"));
 
   // Rule 1: Must have plugin.json at the plugin root
   const pluginJsonPath = path.join(pluginDir, "plugin.json");
   if (!fs.existsSync(pluginJsonPath)) {
     errors.push("missing required file: plugin.json");
-    return errors;
+    return { errors, warnings: [], plugin: parsedPlugin };
   }
 
   // Rule 2: Must have README.md
@@ -267,7 +270,7 @@ function validatePlugin(folderName) {
     parsedPlugin = plugin;
   } catch (err) {
     errors.push(`failed to parse plugin.json: ${err.message}`);
-    return { errors, plugin: parsedPlugin };
+    return { errors, warnings: [], plugin: parsedPlugin };
   }
 
   // Rule 3: $schema required
@@ -301,10 +304,10 @@ function validatePlugin(folderName) {
   warnings.push(...licenseResult.warnings);
 
   // Rule 6: agents, hooks, and skills paths
-  const specErrors = validateSpecPaths(plugin);
+  const specErrors = validateSpecPaths(plugin, { rootFolder });
   errors.push(...specErrors);
 
-  const extensionRefErrors = validateExtensionReferences(plugin, pluginDir);
+  const extensionRefErrors = validateExtensionReferences(plugin, pluginDir, { extensionsDir });
   errors.push(...extensionRefErrors);
 
   if (isExtensionPlugin) {
@@ -423,6 +426,18 @@ export function validatePlugins() {
 
   return !hasErrors;
 }
+
+export {
+  validateCompositionNamespace,
+  validateDescription,
+  validateExtensionReferences,
+  validateKeywords,
+  validateName,
+  validatePlugin,
+  validateSchema,
+  validateSpecPaths,
+  validateVersion,
+};
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

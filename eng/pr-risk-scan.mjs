@@ -2,6 +2,7 @@
 
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const SCRIPT_EXTENSIONS = new Set([
   ".sh",
@@ -406,9 +407,24 @@ function main() {
   );
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error.message);
-  process.exit(1);
+export {
+  hasUnpinnedVersionIndicator,
+  isLikelyAbsolutePath,
+  isPathWithinRoot,
+  isPotentialText,
+  normalizeRelativePath,
+  parseArgs,
+  scanLineRules,
+  scanSkillScriptPath,
+  severityCounts,
+  toMarkdownReport,
+};
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
 }

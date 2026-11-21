@@ -728,7 +728,7 @@ function readPluginJson(pluginDir) {
 /**
  * Generate the plugins section with a table of all plugins
  */
-function generatePluginsSection(pluginsDir) {
+function generatePluginsSection(pluginsDir, _registryNames = [], { extensionsDir = EXTENSIONS_DIR } = {}) {
   // Check if plugins directory exists, create it if it doesn't
   if (!fs.existsSync(pluginsDir)) {
     console.log("Plugins directory does not exist, creating it...");
@@ -792,7 +792,7 @@ function generatePluginsSection(pluginsDir) {
       ? composition.extensions.length
       : 0;
     const implicitExtension =
-      fs.existsSync(path.join(EXTENSIONS_DIR, entry.pluginId, "extension.mjs")) &&
+      fs.existsSync(path.join(extensionsDir, entry.pluginId, "extension.mjs")) &&
       !(Array.isArray(composition.extensions) && composition.extensions.some(
         (reference) => reference === `./extensions/${entry.pluginId}`
       ))
@@ -826,7 +826,7 @@ function generatePluginsSection(pluginsDir) {
 /**
  * Generate the featured plugins section for the main README
  */
-function generateFeaturedPluginsSection(pluginsDir) {
+function generateFeaturedPluginsSection(pluginsDir, { extensionsDir = EXTENSIONS_DIR } = {}) {
   // Check if plugins directory exists
   if (!fs.existsSync(pluginsDir)) {
     return "";
@@ -860,7 +860,7 @@ function generateFeaturedPluginsSection(pluginsDir) {
             ? composition.extensions.length
             : 0;
           const implicitExtension =
-            fs.existsSync(path.join(EXTENSIONS_DIR, name, "extension.mjs")) &&
+            fs.existsSync(path.join(extensionsDir, name, "extension.mjs")) &&
             !(Array.isArray(composition.extensions) && composition.extensions.some(
               (reference) => reference === `./extensions/${name}`
             ))
@@ -1092,9 +1092,28 @@ async function main() {
   }
 }
 
+export {
+  buildCategoryReadme,
+  extractDescription,
+  extractTitle,
+  formatTableCell,
+  generateAgentsSection,
+  generateFeaturedPluginsSection,
+  generateHooksSection,
+  generateInstructionsSection,
+  generateMcpServerLinks,
+  generatePluginsSection,
+  generateSkillsSection,
+  generateWorkflowsSection,
+  makeBadges,
+  writeFileIfChanged,
+};
+
 // Run the main function
-main().catch((error) => {
-  console.error(`Fatal error: ${error.message}`);
-  console.error(error.stack);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main().catch((error) => {
+    console.error(`Fatal error: ${error.message}`);
+    console.error(error.stack);
+    process.exit(1);
+  });
+}
