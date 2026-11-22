@@ -12,6 +12,7 @@ import {
   validateKeywords,
   validateName,
   validatePlugin,
+  validatePlugins,
   validateSchema,
   validateSpecPaths,
   validateVersion,
@@ -224,4 +225,66 @@ test("validatePlugin validates curated and canvas-extension plugins and warns on
   fs.writeFileSync(path.join(canvasExtDir, "assets", "preview.png"), "png", "utf8");
   const withPreview = validatePlugin("canvas-widget", { pluginsDir, extensionsDir, rootFolder });
   assert.deepEqual(withPreview.errors, []);
+});
+
+test("validatePlugin and validatePlugins enforce catalog integrity, orphaned extension checks, and root field rules", (t) => {
+  const { rootFolder, pluginsDir, extensionsDir } = makeTempRepo(t);
+  const externalPluginsFile = path.join(pluginsDir, "external.json");
+
+  // Empty pluginsDir returns true
+  assert.equal(validatePlugins({ pluginsDir, extensionsDir, rootFolder, externalPluginsFile }), true);
+
+  // Missing plugin.json and malformed plugin.json + misplaced top-level agents
+  fs.mkdirSync(path.join(pluginsDir, "missing-manifest"), { recursive: true });
+  assert.ok(
+    validatePlugin("missing-manifest", { pluginsDir, extensionsDir, rootFolder }).errors.includes(
+      "missing required file: plugin.json",
+    ),
+  );
+
+  fs.mkdirSync(path.join(pluginsDir, "bad-json"), { recursive: true });
+  fs.writeFileSync(path.join(pluginsDir, "bad-json", "plugin.json"), "{broken", "utf8");
+  const badJsonResult = validatePlugin("bad-json", { pluginsDir, extensionsDir, rootFolder });
+  assert.ok(badJsonResult.errors.some((e) => e.includes("missing required file: README.md")));
+  assert.ok(badJsonResult.errors.some((e) => e.includes("failed to parse plugin.json")));
+
+  // Clean up invalid dirs and test validatePlugins catalog checks
+  fs.rmSync(path.join(pluginsDir, "missing-manifest"), { recursive: true, force: true });
+  fs.rmSync(path.join(pluginsDir, "bad-json"), { recursive: true, force: true });
+
+  const alphaDir = path.join(pluginsDir, "alpha-pack");
+  fs.mkdirSync(alphaDir, { recursive: true });
+  fs.writeFileSync(path.join(alphaDir, "README.md"), "# Alpha\n", "utf8");
+  fs.writeFileSync(
+    path.join(alphaDir, "plugin.json"),
+    JSON.stringify({
+      $schema: AGENT_PLUGIN_SCHEMA_URL,
+      name: "alpha-pack",
+      description: "Alpha plugin",
+      version: "1.0.0",
+      extensions: { [AWESOME_NS]: {} },
+    }),
+    "utf8",
+  );
+  fs.writeFileSync(externalPluginsFile, "[]\n", "utf8");
+  assert.equal(validatePlugins({ pluginsDir, extensionsDir, rootFolder, externalPluginsFile }), true);
+
+  // Orphaned reusable extension causes validatePlugins to return false
+  fs.mkdirSync(path.join(extensionsDir, "orphan-ext"), { recursive: true });
+  fs.writeFileSync(path.join(extensionsDir, "orphan-ext", "extension.mjs"), "export default {};\n", "utf8");
+  assert.equal(validatePlugins({ pluginsDir, extensionsDir, rootFolder, externalPluginsFile }), false);
+
+  // Referencing the extension from alpha-pack resolves the orphan error
+  fs.writeFileSync(
+    path.join(alphaDir, "plugin.json"),
+    JSON.stringify({
+      $schema: AGENT_PLUGIN_SCHEMA_URL,
+      name: "alpha-pack",
+      description: "Alpha plugin",
+      version: "1.0.0",
+      extensions: { [AWESOME_NS]: { extensions: ["./extensions/orphan-ext"] } },
+    }),
+    "utf8",
+  );
+  assert.equal(validatePlugins({ pluginsDir, extensionsDir, rootFolder, externalPluginsFile }), true);
 });

@@ -42,6 +42,7 @@ function createRepositoryFixture() {
 function runSync(args) {
   return spawnSync(process.execPath, [syncScriptPath, ...args], {
     encoding: "utf8",
+    timeout: 10_000,
     windowsHide: true,
   });
 }

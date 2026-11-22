@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/delete-gone-branches.sh [--apply]
+Usage: bash eng/delete-gone-branches.sh [--apply]
 
 Find local branches whose upstream is marked "[gone]" and delete them.
 
@@ -37,7 +37,12 @@ esac
 
 git fetch --prune --quiet
 
-mapfile -t gone_branches < <(
+gone_branches=()
+while IFS= read -r branch; do
+  if [[ -n "$branch" ]]; then
+    gone_branches+=("$branch")
+  fi
+done < <(
   git for-each-ref --format='%(refname:short) %(upstream:track)' refs/heads |
     while IFS= read -r line; do
       branch=${line% *}

@@ -16,6 +16,7 @@ function runGit(cwd, args, env = {}) {
   execFileSync("git", args, {
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout: 10_000,
     env: { ...process.env, ...env },
   });
 }

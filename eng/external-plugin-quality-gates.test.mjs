@@ -4,8 +4,21 @@ import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
 import { after, test } from "node:test";
-import { runCanvasStructureGate, runRefShaConsistencyGate, runVersionMatchGate } from "./external-plugin-quality-gates.mjs";
+import {
+  buildEphemeralMarketplace,
+  buildVallyLintArgs,
+  classifySmokeFailure,
+  inspectAgentPluginSpecCompliance,
+  normalizePluginPath,
+  parseCliArgs,
+  resolveFetchSpec,
+  runCanvasStructureGate,
+  runRefShaConsistencyGate,
+  runVersionMatchGate,
+  truncateOutput,
+} from "./external-plugin-quality-gates.mjs";
 
+const SUBPROCESS_TIMEOUT_MS = 10_000;
 const tempDirs = [];
 
 after(() => {
@@ -15,7 +28,11 @@ after(() => {
 });
 
 function runGit(repoDir, ...args) {
-  const result = spawnSync("git", args, { cwd: repoDir, encoding: "utf8" });
+  const result = spawnSync("git", args, {
+    cwd: repoDir,
+    encoding: "utf8",
+    timeout: SUBPROCESS_TIMEOUT_MS,
+  });
   if (result.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed: ${result.stdout}\n${result.stderr}`);
   }
@@ -332,4 +349,157 @@ test("runRefShaConsistencyGate passes when ref and sha point to the same commit"
 
   const result = runRefShaConsistencyGate(repoDir, plugin, sha);
   assert.equal(result.status, "pass", result.output);
+});
+
+test("truncateOutput, normalizePluginPath, resolveFetchSpec, classifySmokeFailure, and parseCliArgs handle boundary inputs", () => {
+  assert.equal(truncateOutput("\x1b[31mError:\x1b[0m failed  "), "Error: failed");
+  const oversized = "x".repeat(12_050);
+  const truncated = truncateOutput(oversized);
+  assert.match(truncated, /\.\.\.output truncated\.\.\.$/);
+  assert.ok(truncated.length < oversized.length);
+
+  assert.equal(normalizePluginPath(""), "");
+  assert.equal(normalizePluginPath("/"), "");
+  assert.equal(normalizePluginPath(" /packages/my-plugin/ "), "packages/my-plugin");
+  assert.throws(() => normalizePluginPath("../escape"), /Invalid plugin path/);
+  assert.throws(() => normalizePluginPath("packages\\win"), /Invalid plugin path/);
+
+  const sha = "a".repeat(40);
+  assert.equal(resolveFetchSpec({ sha, ref: "v1.0.0" }), sha);
+  assert.equal(resolveFetchSpec({ ref: " refs/tags/v1.0.0 " }), "refs/tags/v1.0.0");
+  assert.equal(resolveFetchSpec({ ref: "v1.0.0" }), "v1.0.0");
+  assert.throws(() => resolveFetchSpec({}), /source\.ref or source\.sha is required/);
+  assert.throws(() => resolveFetchSpec({ ref: "   " }), /source\.ref or source\.sha is required/);
+
+  assert.equal(classifySmokeFailure("HTTP 401 Unauthorized"), "infra_error");
+  assert.equal(classifySmokeFailure("Error: getaddrinfo ENOTFOUND github.com"), "infra_error");
+  assert.equal(classifySmokeFailure("Request timeout after 30s"), "infra_error");
+  assert.equal(classifySmokeFailure("Invalid manifest schema in plugin.json"), "fail");
+
+  assert.deepEqual(parseCliArgs(["positional", "--plugin-json", '{"name":"x"}', "--mode", "strict"]), {
+    "plugin-json": '{"name":"x"}',
+    mode: "strict",
+  });
+});
+
+test("inspectAgentPluginSpecCompliance, buildVallyLintArgs, and buildEphemeralMarketplace validate plugin layouts", () => {
+  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "external-plugin-quality-spec-"));
+  tempDirs.push(workDir);
+
+  // Missing plugin.json
+  assert.equal(inspectAgentPluginSpecCompliance(workDir).status, "warning");
+  assert.deepEqual(buildVallyLintArgs(workDir), [workDir]);
+
+  // Nested .plugin/plugin.json with invalid JSON
+  fs.mkdirSync(path.join(workDir, ".plugin"), { recursive: true });
+  const nestedManifestPath = path.join(workDir, ".plugin", "plugin.json");
+  fs.writeFileSync(nestedManifestPath, "{not-json", "utf8");
+  const invalidJsonCompliance = inspectAgentPluginSpecCompliance(workDir);
+  assert.equal(invalidJsonCompliance.status, "warning");
+  assert.match(invalidJsonCompliance.output, /not valid JSON/);
+  assert.deepEqual(buildVallyLintArgs(workDir), [workDir]);
+
+  // Nested manifest with comprehensive spec violations
+  fs.writeFileSync(
+    nestedManifestPath,
+    JSON.stringify({
+      $schema: "https://example.com/wrong.json",
+      name: "Bad--Name",
+      version: "",
+      description: "   ",
+      homepage: 123,
+      author: { name: "Ok", extra: "disallowed", url: 99 },
+      keywords: ["ok", 42],
+      extensions: { "com.example": [] },
+      nonStandardField: true,
+    }),
+    "utf8",
+  );
+  const warningsResult = inspectAgentPluginSpecCompliance(workDir);
+  assert.equal(warningsResult.status, "warning");
+  assert.match(warningsResult.output, /manifest location is/);
+  assert.match(warningsResult.output, /\$schema should be/);
+  assert.match(warningsResult.output, /does not match Agent Plugins naming constraints/);
+  assert.match(warningsResult.output, /author\.extra/);
+  assert.match(warningsResult.output, /nonStandardField/);
+
+  // Valid root plugin.json + resolvable skill directory
+  fs.rmSync(path.join(workDir, ".plugin"), { recursive: true, force: true });
+  const skillDir = path.join(workDir, "skills", "triage");
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(workDir, "plugin.json"),
+    JSON.stringify({
+      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      name: "clean-plugin",
+      version: "1.2.3",
+      description: "Fully compliant manifest",
+    }),
+    "utf8",
+  );
+  const passResult = inspectAgentPluginSpecCompliance(workDir);
+  assert.equal(passResult.status, "pass", passResult.output);
+
+  // With skills array in plugin.json, buildVallyLintArgs resolves existing skill dirs
+  fs.writeFileSync(
+    path.join(workDir, "plugin.json"),
+    JSON.stringify({
+      name: "clean-plugin",
+      version: "1.2.3",
+      skills: ["./skills/triage", "./skills/missing"],
+    }),
+    "utf8",
+  );
+  assert.deepEqual(buildVallyLintArgs(workDir), [skillDir]);
+
+  const marketplaceDir = buildEphemeralMarketplace(workDir, { name: "clean-plugin", version: "1.2.3" });
+  const marketplace = JSON.parse(fs.readFileSync(path.join(marketplaceDir, "marketplace.json"), "utf8"));
+  assert.equal(marketplace.name, "external-plugin-intake");
+  assert.equal(marketplace.plugins[0].name, "clean-plugin");
+});
+
+test("version, ref/sha, and canvas gates cover not_run, mismatch, invalid JSON, and non-directory extensions", () => {
+  const repoDir = createTempRepo();
+  fs.writeFileSync(path.join(repoDir, "extensions"), "not-a-directory\n", "utf8");
+  fs.writeFileSync(path.join(repoDir, "plugin.json"), JSON.stringify({ name: "demo", version: "2.0.0" }), "utf8");
+  const sha = commitAll(repoDir, "Version mismatch and blob extensions");
+
+  // Skips when locators or canvas keyword are absent
+  assert.equal(runVersionMatchGate(repoDir, { name: "demo", version: "2.0.0", source: {} }, sha).status, "not_run");
+  assert.equal(runRefShaConsistencyGate(repoDir, { name: "demo", source: { sha } }, sha).status, "not_run");
+  assert.equal(
+    runRefShaConsistencyGate(repoDir, { name: "demo", source: { ref: sha, sha: "short" } }, sha).status,
+    "not_run",
+  );
+  assert.equal(runCanvasStructureGate(repoDir, { name: "demo", keywords: ["other"], source: { sha } }, sha).status, "not_run");
+  assert.equal(runCanvasStructureGate(repoDir, { name: "demo", keywords: ["canvas"], source: {} }, sha).status, "not_run");
+
+  // Version mismatch -> fail
+  const mismatch = runVersionMatchGate(
+    repoDir,
+    { name: "demo", version: "1.0.0", source: { sha } },
+    sha,
+  );
+  assert.equal(mismatch.status, "fail");
+  assert.match(mismatch.output, /does not match/);
+
+  // extensions path is a file -> fail
+  const blobExtensions = runCanvasStructureGate(
+    repoDir,
+    { name: "demo", keywords: ["canvas"], source: { sha } },
+    sha,
+  );
+  assert.equal(blobExtensions.status, "fail");
+  assert.match(blobExtensions.output, /"extensions" must be a directory/);
+
+  // Invalid JSON in plugin.json -> fail
+  fs.writeFileSync(path.join(repoDir, "plugin.json"), "{broken-json\n", "utf8");
+  const invalidJsonSha = commitAll(repoDir, "Broken plugin.json");
+  const invalidManifest = runVersionMatchGate(
+    repoDir,
+    { name: "demo", version: "1.0.0", source: { sha: invalidJsonSha } },
+    invalidJsonSha,
+  );
+  assert.equal(invalidManifest.status, "fail");
+  assert.match(invalidManifest.output, /Invalid JSON/);
 });

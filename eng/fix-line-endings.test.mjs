@@ -24,7 +24,7 @@ test("fix-line-endings.sh converts CRLF markdown files to LF and skips node_modu
   fs.writeFileSync(ignoredPath, "Keep CRLF\r\n", "utf8");
   fs.writeFileSync(nonMdPath, "Keep CRLF\r\n", "utf8");
 
-  execFileSync("bash", [SCRIPT_PATH, tempDir], { stdio: "pipe" });
+  execFileSync("bash", [SCRIPT_PATH, tempDir], { stdio: "pipe", timeout: 10_000 });
 
   assert.equal(fs.readFileSync(docPath, "utf8"), "# Heading\n\nLine two\n");
   assert.equal(fs.readFileSync(ignoredPath, "utf8"), "Keep CRLF\r\n");

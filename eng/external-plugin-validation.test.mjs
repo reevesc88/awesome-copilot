@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import {
   EXTERNAL_PLUGINS_FILE,
+  readExternalPlugins,
   validateExternalPlugin,
   validateExternalPlugins,
 } from "./external-plugin-validation.mjs";
@@ -242,4 +245,107 @@ test("committed external.json passes marketplace policy with zero errors", () =>
   const plugins = JSON.parse(fs.readFileSync(EXTERNAL_PLUGINS_FILE, "utf8"));
   const { errors } = validateExternalPlugins(plugins, { policy: "marketplace" });
   assert.deepEqual(errors, [], `Committed external.json produced errors:\n${errors.join("\n")}`);
+});
+
+test("source.path, source.ref, source.sha, URLs, and plugin field boundaries reject unsafe or malformed values", () => {
+  assert.throws(
+    () => validateExternalPlugin(basePlugin(), 0, { policy: "nonexistent" }),
+    /Unknown external plugin validation policy/,
+  );
+
+  // Custom policy object override: optional keywords with empty array warns instead of erroring
+  const optionalKeywords = validateExternalPlugin(
+    basePlugin({ keywords: [] }),
+    0,
+    { policy: { requireKeywords: false } },
+  );
+  assert.deepEqual(optionalKeywords.errors, []);
+  assert.ok(hasWarning(optionalKeywords, '"keywords" is empty'));
+
+  // Legacy tags fallback warning
+  const legacyTags = basePlugin({ tags: ["legacy-tag"] });
+  delete legacyTags.keywords;
+  const tagsResult = validateExternalPlugin(legacyTags, 0);
+  assert.deepEqual(tagsResult.errors, []);
+  assert.ok(hasWarning(tagsResult, 'prefer "keywords" over legacy "tags"'));
+
+  // Non-object entry and invalid source shapes
+  assert.ok(hasError(validateExternalPlugin(null, 0), "entry must be an object"));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ source: "./local" }), 0), "local file paths are not allowed"));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ source: null }), 0), '"source" is required'));
+
+  // Name, description, keywords, author, URL checks
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ name: "a--b" }), 0), "consecutive hyphens"));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ name: "-bad" }), 0), "start and end"));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ name: "x".repeat(65) }), 0), "64 characters"));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ description: "x".repeat(501) }), 0), "500 characters"));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ keywords: ["", "Bad_Key", "x".repeat(31)] }), 0), "keywords[0]"));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ author: "string-author" }), 0), '"author" must be an object'));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ homepage: "http://example.com" }), 0), '"homepage" must use https'));
+  assert.ok(hasError(validateExternalPlugin(basePlugin({ homepage: "not a url" }), 0), '"homepage" must be a valid URL'));
+  assert.ok(
+    hasError(validateExternalPlugin(basePlugin({ repository: "https://gitlab.com/org/repo" }), 0), "https://github.com/"),
+  );
+
+  // source.path rules
+  assert.deepEqual(
+    validateExternalPlugin(basePlugin({ source: { source: "github", repo: "o/r", ref: "v1.0.0", path: "/" } }), 0).errors,
+    [],
+  );
+  for (const badPath of ["", "/abs", "../up", "a\\b", ".", "plugins/demo/plugin.json"]) {
+    const res = validateExternalPlugin(
+      basePlugin({ source: { source: "github", repo: "o/r", ref: "v1.0.0", path: badPath } }),
+      0,
+    );
+    assert.ok(res.errors.length > 0, `expected error for source.path="${badPath}"`);
+  }
+
+  // source.ref and source.sha rules
+  for (const badRef of ["", "refs/heads/main", "main", "refs/pull/1/head", "deadbeef"]) {
+    const res = validateExternalPlugin(
+      basePlugin({ source: { source: "github", repo: "o/r", ref: badRef } }),
+      0,
+    );
+    assert.ok(res.errors.length > 0, `expected error for source.ref="${badRef}"`);
+  }
+  assert.deepEqual(
+    validateExternalPlugin(
+      basePlugin({ source: { source: "github", repo: "o/r", ref: "refs/tags/v1.0.0", sha: "a".repeat(40) } }),
+      0,
+    ).errors,
+    [],
+  );
+  assert.ok(
+    hasError(
+      validateExternalPlugin(basePlugin({ source: { source: "github", repo: "o/r", sha: "short" } }), 0),
+      "40-character commit SHA",
+    ),
+  );
+});
+
+test("validateExternalPlugins and readExternalPlugins detect duplicates, local collisions, and malformed files", (t) => {
+  assert.ok(validateExternalPlugins("not-an-array").errors[0].includes("must contain an array"));
+
+  const dupCheck = validateExternalPlugins(
+    [
+      basePlugin({ name: "my-pack" }),
+      basePlugin({ name: "my-pack" }),
+      basePlugin({ name: "local-pack" }),
+    ],
+    { localPluginNames: ["Local-Pack"] },
+  );
+  assert.ok(dupCheck.errors.some((e) => e.includes('duplicate plugin name "my-pack"')));
+  assert.ok(dupCheck.errors.some((e) => e.includes('conflicts with local plugin "Local-Pack"')));
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "awesome-copilot-ext-val-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  const missing = readExternalPlugins({ filePath: path.join(tempDir, "missing.json") });
+  assert.deepEqual(missing, { plugins: [], errors: [], warnings: [] });
+
+  const brokenPath = path.join(tempDir, "broken.json");
+  fs.writeFileSync(brokenPath, "{bad", "utf8");
+  const broken = readExternalPlugins({ filePath: brokenPath });
+  assert.equal(broken.plugins.length, 0);
+  assert.ok(broken.errors[0].includes("Error reading broken.json"));
 });

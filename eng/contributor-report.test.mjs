@@ -1,4 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
   generateMarkdownReport,
@@ -152,4 +157,51 @@ test("parseRepoFromRemoteUrl, parseMissingContributorsOutput, and generatePRRepo
   const miscReport = generatePRReport({ login: "alice" }, miscPr);
   assert.deepEqual(miscReport.contributionTypes, ["ideas"]);
   assert.equal(miscReport.commentSnippet, "@all-contributors please add @alice for ideas");
+});
+
+test("generateMarkdownReport renders empty-PR fallback and CLI creates missing reports/ directory", (t) => {
+  const emptyPrReport = generateMarkdownReport(
+    [{ username: "no-prs-user", totalPRs: 0, prs: [] }],
+    1,
+  );
+  assert.match(emptyPrReport, /_No eligible PRs found\._/);
+  assert.match(emptyPrReport, /Alternate CLI: `npx all-contributors add no-prs-user code`/);
+
+  // End-to-end CLI check in an isolated temp dir with a stubbed npx binary
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "awesome-copilot-contrib-cli-"));
+  const binDir = path.join(tempDir, "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  fs.writeFileSync(
+    path.join(tempDir, ".all-contributorsrc"),
+    JSON.stringify({ ignoreList: ["ignored-bot"], contributors: [] }),
+    "utf8",
+  );
+
+  const fakeNpx = path.join(binDir, "npx");
+  fs.writeFileSync(
+    fakeNpx,
+    "#!/bin/sh\necho 'Missing contributors in .all-contributorsrc:'\necho '  ignored-bot'\n",
+    { encoding: "utf8", mode: 0o755 },
+  );
+
+  const scriptPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "contributor-report.mjs");
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: tempDir,
+    encoding: "utf8",
+    timeout: 10_000,
+    env: {
+      ...process.env,
+      PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      PRIVATE_TOKEN: "synthetic-placeholder",
+      GITHUB_TOKEN: "",
+      GH_TOKEN: "",
+    },
+  });
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const reportFile = path.join(tempDir, "reports", "contributor-report.md");
+  assert.equal(fs.existsSync(reportFile), true);
+  assert.equal(fs.readFileSync(reportFile, "utf8"), "No missing contributors detected.\n");
 });
