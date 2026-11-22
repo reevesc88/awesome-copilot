@@ -3,23 +3,23 @@
 import fs from "fs";
 import path from "path";
 import readline from "readline";
+import { fileURLToPath } from "url";
 import { ROOT_FOLDER } from "./constants.mjs";
 
 const PLUGINS_DIR = path.join(ROOT_FOLDER, "plugins");
+const PLUGIN_ID_MAX_LENGTH = 64;
+const PLUGIN_ID_PATTERN = /^(?!.*--)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-function prompt(question) {
-  return new Promise((resolve) => {
-    rl.question(question, resolve);
-  });
+export function isValidPluginId(pluginId) {
+  return (
+    typeof pluginId === "string" &&
+    pluginId.length >= 1 &&
+    pluginId.length <= PLUGIN_ID_MAX_LENGTH &&
+    PLUGIN_ID_PATTERN.test(pluginId)
+  );
 }
 
-function parseArgs() {
-  const args = process.argv.slice(2);
+export function parseArgs(args = process.argv.slice(2)) {
   const out = { name: undefined, keywords: undefined };
 
   for (let i = 0; i < args.length; i++) {
@@ -28,12 +28,12 @@ function parseArgs() {
       out.name = args[i + 1];
       i++;
     } else if (a.startsWith("--name=")) {
-      out.name = a.split("=")[1];
+      out.name = a.slice(a.indexOf("=") + 1);
     } else if (a === "--keywords" || a === "--tags" || a === "-t") {
       out.keywords = args[i + 1];
       i++;
     } else if (a.startsWith("--keywords=") || a.startsWith("--tags=")) {
-      out.keywords = a.split("=")[1];
+      out.keywords = a.slice(a.indexOf("=") + 1);
     } else if (!a.startsWith("-") && !out.name) {
       // first positional -> name
       out.name = a;
@@ -50,32 +50,52 @@ function parseArgs() {
   return out;
 }
 
-async function createPlugin() {
+export async function createPlugin({
+  argv = process.argv.slice(2),
+  promptFn,
+  pluginsDir = PLUGINS_DIR,
+  exit = (code) => process.exit(code),
+} = {}) {
+  let rl = null;
+  const ask =
+    promptFn ??
+    ((question) => {
+      if (!rl) {
+        rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+      }
+      return new Promise((resolve) => {
+        rl.question(question, resolve);
+      });
+    });
+
   try {
     console.log("🔌 Plugin Creator");
     console.log("This tool will help you create a new plugin.\n");
 
-    const parsed = parseArgs();
+    const parsed = parseArgs(argv);
 
     // Get plugin ID
     let pluginId = parsed.name;
     if (!pluginId) {
-      pluginId = await prompt("Plugin ID (lowercase, hyphens only): ");
+      pluginId = await ask("Plugin ID (lowercase, hyphens only): ");
     }
 
     if (!pluginId) {
       console.error("❌ Plugin ID is required");
-      process.exit(1);
+      return exit(1);
     }
 
-    if (!/^[a-z0-9-]+$/.test(pluginId)) {
+    if (!isValidPluginId(pluginId)) {
       console.error(
-        "❌ Plugin ID must contain only lowercase letters, numbers, and hyphens"
+        "❌ Plugin ID must be 1-64 characters of lowercase letters, numbers, and single hyphens"
       );
-      process.exit(1);
+      return exit(1);
     }
 
-    const pluginDir = path.join(PLUGINS_DIR, pluginId);
+    const pluginDir = path.join(pluginsDir, pluginId);
 
     // Check if plugin already exists
     if (fs.existsSync(pluginDir)) {
@@ -83,7 +103,7 @@ async function createPlugin() {
         `⚠️  Plugin ${pluginId} already exists at ${pluginDir}`
       );
       console.log("💡 Please edit that plugin instead or choose a different ID.");
-      process.exit(1);
+      return exit(1);
     }
 
     // Get display name
@@ -92,7 +112,7 @@ async function createPlugin() {
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ");
 
-    let displayName = await prompt(
+    let displayName = await ask(
       `Display name (default: ${defaultDisplayName}): `
     );
     if (!displayName.trim()) {
@@ -101,7 +121,7 @@ async function createPlugin() {
 
     // Get description
     const defaultDescription = `A plugin for ${displayName.toLowerCase()}.`;
-    let description = await prompt(
+    let description = await ask(
       `Description (default: ${defaultDescription}): `
     );
     if (!description.trim()) {
@@ -112,7 +132,7 @@ async function createPlugin() {
     let keywords = [];
     let keywordInput = parsed.keywords;
     if (!keywordInput) {
-      keywordInput = await prompt(
+      keywordInput = await ask(
         "Keywords (comma-separated, or press Enter for defaults): "
       );
     }
@@ -185,12 +205,15 @@ MIT
     console.log(`2. Update plugins/${pluginId}/plugin.json with your metadata`);
     console.log(`3. Edit plugins/${pluginId}/README.md to describe your plugin`);
     console.log("4. Run 'npm run build' to regenerate documentation");
+    return pluginDir;
   } catch (error) {
     console.error(`❌ Error creating plugin: ${error.message}`);
-    process.exit(1);
+    return exit(1);
   } finally {
-    rl.close();
+    rl?.close();
   }
 }
 
-createPlugin();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  createPlugin();
+}

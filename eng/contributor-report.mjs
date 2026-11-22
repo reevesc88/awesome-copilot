@@ -10,8 +10,6 @@ import { setupGracefulShutdown } from './utils/graceful-shutdown.mjs';
 
 const DEFAULT_CMD_TIMEOUT = 30_000; // 30s
 
-setupGracefulShutdown('contributor-report');
-
 /**
  * Patterns that represent generated files; contributors should not be credited
  * for these files because they are not substantive authored content.
@@ -188,6 +186,59 @@ export const getContributionTypes = (files) => {
 };
 
 /**
+ * Parse `all-contributors check` stdout and filter out ignored usernames.
+ * @param {string} output
+ * @param {string[]} [ignoreEntries]
+ * @returns {string[]}
+ */
+export const parseMissingContributorsOutput = (output, ignoreEntries = []) => {
+  const ignoreSet = new Set(ignoreEntries.map((entry) => entry.toLowerCase()));
+  const lines = String(output ?? '').split('\n');
+
+  const headerLineIndex = lines.findIndex((line) =>
+    line.includes('Missing contributors in .all-contributorsrc:')
+  );
+
+  if (headerLineIndex === -1) {
+    return [];
+  }
+
+  let contributorsLine = '';
+  for (let i = headerLineIndex + 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+
+    if (line.includes('Unknown contributors') || line.includes('✨')) {
+      break;
+    }
+
+    if (line && !line.startsWith('⠙') && !line.startsWith('✨')) {
+      contributorsLine = line;
+      break;
+    }
+  }
+
+  if (!contributorsLine) {
+    return [];
+  }
+
+  const allUsernames = contributorsLine
+    .split(',')
+    .map((username) => username.trim())
+    .filter((username) => username.length > 0);
+
+  return allUsernames.filter((username) => {
+    const lowerUsername = username.toLowerCase();
+
+    if (ignoreSet.has(lowerUsername)) {
+      console.log(`⏭️  FILTERED: ${username} is in ignore list`);
+      return false;
+    }
+
+    return true;
+  });
+};
+
+/**
  * Check .all-contributors output to discover missing contributors.
  * This is the canonical implementation used by contributor tooling.
  * @returns {string[]}
@@ -211,51 +262,11 @@ export const getMissingContributors = () => {
       timeout: DEFAULT_CMD_TIMEOUT
     });
 
-    const lines = output.split('\n');
-
-    const headerLineIndex = lines.findIndex(line =>
-      line.includes('Missing contributors in .all-contributorsrc:')
-    );
-
-    if (headerLineIndex === -1) {
+    const filteredUsernames = parseMissingContributorsOutput(output, ignoreEntries);
+    if (filteredUsernames.length === 0) {
       console.log('✅ No missing contributors found');
       return [];
     }
-
-    let contributorsLine = '';
-    for (let i = headerLineIndex + 1; i < lines.length; i++) {
-      const line = lines[i].trim();
-
-      if (line.includes('Unknown contributors') || line.includes('✨')) {
-        break;
-      }
-
-      if (line && !line.startsWith('⠙') && !line.startsWith('✨')) {
-        contributorsLine = line;
-        break;
-      }
-    }
-
-    if (!contributorsLine) {
-      console.log('✅ No missing contributors found');
-      return [];
-    }
-
-    const allUsernames = contributorsLine
-      .split(',')
-      .map(username => username.trim())
-      .filter(username => username.length > 0);
-
-    const filteredUsernames = allUsernames.filter(username => {
-      const lowerUsername = username.toLowerCase();
-
-      if (ignoreSet.has(lowerUsername)) {
-        console.log(`⏭️  FILTERED: ${username} is in ignore list`);
-        return false;
-      }
-
-      return true;
-    });
 
     console.log(`📋 Found ${filteredUsernames.length} missing contributors after filtering: ${filteredUsernames.join(', ')}`);
     return filteredUsernames;
@@ -290,27 +301,28 @@ export const getMissingContributors = () => {
 
 // --- REPORT GENERATION LOGIC ---
 
+export const parseRepoFromRemoteUrl = (remoteUrl) => {
+  const url = String(remoteUrl || '').trim();
+  if (!url) return null;
+
+  // Supports:
+  // - git@github.com:owner/repo.git
+  // - ssh://git@github.com/owner/repo.git
+  // - https://github.com/owner/repo.git
+  // - https://github.com/owner/repo
+  const regex = /github\.com[/:]([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/;
+  const match = regex.exec(url);
+  if (!match) return null;
+
+  return `${match[1]}/${match[2]}`;
+};
+
 /**
  * Get the current GitHub repository in owner/repo format.
  * Tries upstream first, then origin.
  * @returns {string}
  */
 const getGitHubRepo = () => {
-  const parseRepoFromRemoteUrl = (remoteUrl) => {
-    const url = String(remoteUrl || '').trim();
-    if (!url) return null;
-
-    // Supports:
-    // - git@github.com:owner/repo.git
-    // - ssh://git@github.com/owner/repo.git
-    // - https://github.com/owner/repo.git
-    // - https://github.com/owner/repo
-    const regex = /github\.com[/:]([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/;
-    const match = regex.exec(url);
-    if (!match) return null;
-
-    return `${match[1]}/${match[2]}`;
-  };
 
   try {
     const upstreamUrl = execSync('git config --get remote.upstream.url', {
@@ -377,7 +389,7 @@ export const fetchContributorMergedPrs = (username, { includeAllFiles = false } 
  * @param {{includeAllFiles?:boolean}} [opts]
  * @returns {object|null}
  */
-const generatePRReport = (contributor, pr, { includeAllFiles = false } = {}) => {
+export const generatePRReport = (contributor, pr, { includeAllFiles = false } = {}) => {
   const types = new Set();
   const fileDetails = [];
 
@@ -587,5 +599,6 @@ const main = () => {
 };
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  setupGracefulShutdown('contributor-report');
   main();
 }

@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ROOT_FOLDER } from "./constants.mjs";
 import { setupGracefulShutdown } from "./utils/graceful-shutdown.mjs";
 
@@ -10,7 +11,7 @@ const DEFAULT_REPO = "github/awesome-copilot";
 const DEFAULT_LIMIT = 500;
 const DEFAULT_CMD_TIMEOUT = 30_000;
 
-const REPORT_DEFINITIONS = [
+export const REPORT_DEFINITIONS = [
   {
     heading: "PRs that target `main`",
     fileName: "prs-targeting-main.json",
@@ -33,8 +34,6 @@ const REPORT_DEFINITIONS = [
   }
 ];
 
-setupGracefulShutdown("generate-open-pr-report");
-
 function printUsage() {
   console.log(`Usage: node eng/generate-open-pr-report.mjs [--repo owner/name] [--output-dir path] [--limit N]
 
@@ -54,7 +53,7 @@ Options:
   --help, -h    Show this help text`);
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const options = {
     repo: DEFAULT_REPO,
     outputDir: path.join(ROOT_FOLDER, "reports"),
@@ -82,7 +81,8 @@ function parseArgs(argv) {
     }
 
     if (arg === "--limit") {
-      options.limit = Number.parseInt(argv[i + 1] ?? "", 10);
+      const rawLimit = String(argv[i + 1] ?? "").trim();
+      options.limit = /^\d+$/.test(rawLimit) ? Number.parseInt(rawLimit, 10) : Number.NaN;
       i += 1;
       continue;
     }
@@ -90,7 +90,7 @@ function parseArgs(argv) {
     throw new Error(`Unknown option: ${arg}`);
   }
 
-  if (!options.repo || !options.repo.includes("/")) {
+  if (!options.repo || !/^[^/\s]+\/[^/\s]+$/.test(options.repo)) {
     throw new Error("--repo must be in owner/name format.");
   }
 
@@ -126,7 +126,7 @@ function runGhJson(args) {
   return JSON.parse(output);
 }
 
-function getCheckState(statusCheckRollup) {
+export function getCheckState(statusCheckRollup) {
   if (!Array.isArray(statusCheckRollup) || statusCheckRollup.length === 0) {
     return "NONE";
   }
@@ -153,7 +153,7 @@ function getCheckState(statusCheckRollup) {
   return allSuccessful ? "SUCCESS" : "FAILURE";
 }
 
-function normalizePullRequest(pr) {
+export function normalizePullRequest(pr, nowMs = Date.now()) {
   const checkState = getCheckState(pr.statusCheckRollup);
 
   return {
@@ -166,13 +166,13 @@ function normalizePullRequest(pr) {
     fileCount: pr.changedFiles,
     createdAt: pr.createdAt,
     updatedAt: pr.updatedAt,
-    createdAgeDays: getAgeInDays(pr.createdAt),
-    updatedAgeDays: getAgeInDays(pr.updatedAt),
+    createdAgeDays: getAgeInDays(pr.createdAt, nowMs),
+    updatedAgeDays: getAgeInDays(pr.updatedAt, nowMs),
     url: pr.url
   };
 }
 
-function getCheckLabel(pr) {
+export function getCheckLabel(pr) {
   if (pr.checkState === "SUCCESS") {
     return "Yes";
   }
@@ -188,20 +188,20 @@ function getCheckLabel(pr) {
   return "No";
 }
 
-function escapeMarkdownCell(value) {
+export function escapeMarkdownCell(value) {
   return String(value).replaceAll("|", "\\|");
 }
 
-function getAgeInDays(timestamp) {
-  const milliseconds = Date.now() - new Date(timestamp).getTime();
+export function getAgeInDays(timestamp, nowMs = Date.now()) {
+  const milliseconds = nowMs - new Date(timestamp).getTime();
   return Math.max(0, Math.floor(milliseconds / (24 * 60 * 60 * 1000)));
 }
 
-function formatTimestampWithAge(timestamp) {
-  return `${timestamp.slice(0, 10)} (${getAgeInDays(timestamp)}d ago)`;
+export function formatTimestampWithAge(timestamp, nowMs = Date.now()) {
+  return `${timestamp.slice(0, 10)} (${getAgeInDays(timestamp, nowMs)}d ago)`;
 }
 
-function renderTable(prs) {
+export function renderTable(prs, nowMs = Date.now()) {
   const lines = [
     "| PR title + ID | Author | Whether checks pass | Created | Updated | Link to PR |",
     "| --- | --- | --- | --- | --- | --- |"
@@ -214,14 +214,14 @@ function renderTable(prs) {
 
   for (const pr of prs) {
     lines.push(
-      `| ${escapeMarkdownCell(pr.title)} (#${pr.id}) | ${escapeMarkdownCell(pr.author)} | ${getCheckLabel(pr)} | ${formatTimestampWithAge(pr.createdAt)} | ${formatTimestampWithAge(pr.updatedAt)} | [Link](${pr.url}) |`
+      `| ${escapeMarkdownCell(pr.title)} (#${pr.id}) | ${escapeMarkdownCell(pr.author)} | ${getCheckLabel(pr)} | ${formatTimestampWithAge(pr.createdAt, nowMs)} | ${formatTimestampWithAge(pr.updatedAt, nowMs)} | [Link](${pr.url}) |`
     );
   }
 
   return lines.join("\n");
 }
 
-function renderMarkdownReport(repo, generatedAt, categorizedReports) {
+export function renderMarkdownReport(repo, generatedAt, categorizedReports, nowMs = Date.now()) {
   const sections = [
     "# Open PR report",
     "",
@@ -230,7 +230,7 @@ function renderMarkdownReport(repo, generatedAt, categorizedReports) {
   ];
 
   for (const report of categorizedReports) {
-    sections.push("", `## ${report.heading}`, "", renderTable(report.items));
+    sections.push("", `## ${report.heading}`, "", renderTable(report.items, nowMs));
   }
 
   return `${sections.join("\n")}\n`;
@@ -240,27 +240,35 @@ function writeJsonReport(filePath, items) {
   fs.writeFileSync(filePath, `${JSON.stringify(items, null, 2)}\n`);
 }
 
-function generateOpenPrReport() {
-  const options = parseArgs(process.argv.slice(2));
+export function generateOpenPrReport({
+  argv = process.argv.slice(2),
+  checkCommand = ensureCommandAvailable,
+  fetchPullRequests = (options) =>
+    runGhJson([
+      "pr",
+      "list",
+      "--repo",
+      options.repo,
+      "--state",
+      "open",
+      "--limit",
+      String(options.limit),
+      "--json",
+      "number,title,url,author,baseRefName,changedFiles,createdAt,updatedAt,statusCheckRollup"
+    ]),
+  now = () => new Date()
+} = {}) {
+  const options = parseArgs(argv);
 
-  ensureCommandAvailable("gh");
+  checkCommand("gh");
 
   console.log(`Fetching open PRs from ${options.repo}...`);
 
-  const pullRequests = runGhJson([
-    "pr",
-    "list",
-    "--repo",
-    options.repo,
-    "--state",
-    "open",
-    "--limit",
-    String(options.limit),
-    "--json",
-    "number,title,url,author,baseRefName,changedFiles,createdAt,updatedAt,statusCheckRollup"
-  ]);
+  const pullRequests = fetchPullRequests(options);
+  const currentNow = now();
+  const nowMs = currentNow.getTime();
 
-  const normalizedPullRequests = pullRequests.map(normalizePullRequest);
+  const normalizedPullRequests = pullRequests.map((pr) => normalizePullRequest(pr, nowMs));
   const categorizedReports = REPORT_DEFINITIONS.map((report) => ({
     ...report,
     items: normalizedPullRequests.filter(report.predicate)
@@ -274,8 +282,9 @@ function generateOpenPrReport() {
 
   const markdownReport = renderMarkdownReport(
     options.repo,
-    new Date().toISOString(),
-    categorizedReports
+    currentNow.toISOString(),
+    categorizedReports,
+    nowMs
   );
 
   const markdownFilePath = path.join(options.outputDir, "open-pr-report.md");
@@ -286,6 +295,11 @@ function generateOpenPrReport() {
   for (const report of categorizedReports) {
     console.log(`  ${report.fileName}`);
   }
+
+  return { options, categorizedReports, markdownFilePath };
 }
 
-generateOpenPrReport();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  setupGracefulShutdown("generate-open-pr-report");
+  generateOpenPrReport();
+}

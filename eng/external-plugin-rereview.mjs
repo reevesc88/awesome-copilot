@@ -43,7 +43,7 @@ function normalizePathValue(value) {
     .toLowerCase();
 }
 
-function stripIssueTitlePrefix(title) {
+export function stripIssueTitlePrefix(title) {
   return String(title ?? "")
     .trim()
     .replace(/^\[\s*external plugin\s*\]\s*:\s*/i, "")
@@ -224,7 +224,7 @@ export function removePluginFromExternalJson({ pluginName, sourceRepo, filePath 
   return removedPlugin;
 }
 
-function readCliArgs(argv) {
+export function readCliArgs(argv) {
   const args = {};
 
   for (let index = 0; index < argv.length; index += 1) {

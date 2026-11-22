@@ -18,18 +18,17 @@ import { setupGracefulShutdown } from './utils/graceful-shutdown.mjs';
 
 const DEFAULT_CMD_TIMEOUT = 30_000; // 30 seconds
 
-setupGracefulShutdown('add-missing-contributors');
-
 /**
  * Get all files touched by a contributor from their merged PRs.
  * @param {string} username
+ * @param {{fetchMergedPrs?:function}} [opts]
  * @returns {string[]}
  */
-const getContributorFiles = (username) => {
+export const getContributorFiles = (username, { fetchMergedPrs = fetchContributorMergedPrs } = {}) => {
   try {
     console.log(`📁 Getting files for contributor: ${username}`);
 
-    const prs = fetchContributorMergedPrs(username, { includeAllFiles: true });
+    const prs = fetchMergedPrs(username, { includeAllFiles: true });
 
     if (prs.length === 0) {
       console.log(`📭 No merged PRs found for ${username}`);
@@ -58,12 +57,13 @@ const getContributorFiles = (username) => {
 /**
  * Determine contribution types from a contributor's files.
  * @param {string} username
+ * @param {{fetchMergedPrs?:function}} [opts]
  * @returns {string}
  */
-const analyzeContributor = (username) => {
+export const analyzeContributor = (username, { fetchMergedPrs } = {}) => {
   try {
     console.log(`🔍 Analyzing contribution types for: ${username}`);
-    const files = getContributorFiles(username);
+    const files = getContributorFiles(username, fetchMergedPrs ? { fetchMergedPrs } : undefined);
 
     if (files.length === 0) {
       console.log(`💡 No files found for ${username}, using 'code' fallback`);
@@ -89,11 +89,12 @@ const analyzeContributor = (username) => {
 /**
  * Add a username to the ignore list in .all-contributorsrc.
  * @param {string} username
+ * @param {{cwd?:string}} [opts]
  * @returns {boolean}
  */
-const addToIgnoreList = (username) => {
+export const addToIgnoreList = (username, { cwd = process.cwd() } = {}) => {
   try {
-    const configPath = path.join(process.cwd(), '.all-contributorsrc');
+    const configPath = path.join(cwd, '.all-contributorsrc');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
     const ignoreList = config.ignoreList || config.ignore || [];
@@ -115,19 +116,28 @@ const addToIgnoreList = (username) => {
  * Run the all-contributors CLI to add a contributor to the project.
  * @param {string} username
  * @param {string} types
+ * @param {{execCommand?:function, cwd?:string}} [opts]
  * @returns {boolean}
  */
-const addContributor = (username, types) => {
+export const addContributor = (
+  username,
+  types,
+  {
+    execCommand = (cmd) =>
+      execSync(cmd, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: DEFAULT_CMD_TIMEOUT
+      }),
+    cwd
+  } = {}
+) => {
   try {
     console.log(`➕ Adding contributor: ${username} with types: ${types}`);
 
     const command = `npx all-contributors add ${username} ${types}`;
 
-    execSync(command, {
-      encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: DEFAULT_CMD_TIMEOUT
-    });
+    execCommand(command);
 
     return true;
 
@@ -144,7 +154,7 @@ const addContributor = (username, types) => {
 
     // User-specific errors that can be skipped
     if (error.message.includes('404') || error.message.includes('not found')) {
-      addToIgnoreList(username);
+      addToIgnoreList(username, cwd ? { cwd } : undefined);
       console.error(`❌ User ${username} not found, added to ignore list`);
       return false;
     }
@@ -158,19 +168,26 @@ const addContributor = (username, types) => {
 /**
  * Process a single missing contributor: detect types and add via all-contributors CLI.
  * @param {string} username
- * @returns {{added:number, failed:number}}
+ * @param {{fetchMergedPrs?:function, execCommand?:function, cwd?:string, rethrowSystemErrors?:boolean}} [opts]
+ * @returns {Promise<{added:number, failed:number}>}
  */
-const processContributor = async (username) => {
+export const processContributor = async (
+  username,
+  { fetchMergedPrs, execCommand, cwd } = {}
+) => {
   let added = 0;
   let failed = 0;
 
   try {
     console.log(`📊 Step 2: Analyzing contribution types for ${username}...`);
-    const contributionTypes = analyzeContributor(username);
+    const contributionTypes = analyzeContributor(username, fetchMergedPrs ? { fetchMergedPrs } : undefined);
 
     console.log(`➕ Step 3: Adding ${username} with types: ${contributionTypes}...`);
 
-    const success = addContributor(username, contributionTypes);
+    const success = addContributor(username, contributionTypes, {
+      ...(execCommand ? { execCommand } : {}),
+      ...(cwd ? { cwd } : {})
+    });
     if (success) {
       added++;
       console.log(`✅ Successfully processed ${username}`);
@@ -180,6 +197,15 @@ const processContributor = async (username) => {
     }
 
   } catch (error) {
+    const message = String(error?.message ?? '');
+    if (
+      message.includes('rate limit') ||
+      message.includes('403') ||
+      message.includes('network') ||
+      message.includes('timeout')
+    ) {
+      throw error;
+    }
     failed++;
     console.error(`💥 Error processing ${username}:`, error.message);
   }
@@ -190,13 +216,18 @@ const processContributor = async (username) => {
 /**
  * Main entry point: detect and add missing contributors.
  */
-const main = async () => {
+export const main = async ({
+  getMissing = getMissingContributors,
+  fetchMergedPrs,
+  execCommand,
+  cwd
+} = {}) => {
   console.log('🚀 Starting add missing contributors script');
   console.log('='.repeat(50));
 
   try {
     console.log('\n📋 Step 1: Detecting missing contributors...');
-    const missingContributors = getMissingContributors();
+    const missingContributors = getMissing();
 
     if (missingContributors.length === 0) {
       console.log('🎉 No missing contributors found! All contributors are properly recognized.');
@@ -216,7 +247,11 @@ const main = async () => {
       processed++;
 
       try {
-        const { added: deltaAdded, failed: deltaFailed } = await processContributor(username);
+        const { added: deltaAdded, failed: deltaFailed } = await processContributor(username, {
+          fetchMergedPrs,
+          execCommand,
+          cwd
+        });
         added += deltaAdded;
         failed += deltaFailed;
       } catch (error) {
@@ -238,7 +273,7 @@ const main = async () => {
  * Print a summary report of the run.
  * @param {{processed:number, added:number, failed:number}} results
  */
-const printSummaryReport = (results) => {
+export const printSummaryReport = (results) => {
   const { processed, added, failed } = results;
 
   console.log('\n' + '='.repeat(50));
@@ -284,6 +319,7 @@ const printSummaryReport = (results) => {
 };
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  setupGracefulShutdown('add-missing-contributors');
   try {
     const results = await main();
     printSummaryReport(results);

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import path from "path";
+import { fileURLToPath } from "url";
 import { runExternalPluginQualityGates } from "./external-plugin-quality-gates.mjs";
 import { validateExternalPlugin } from "./external-plugin-validation.mjs";
 
@@ -71,6 +73,7 @@ function createValidationFailureQuality(errors) {
   const output = errors.map((error) => `- ${error}`).join("\n");
   return {
     overall_status: "fail",
+    spec_compliance_status: "not_run",
     vally_lint_status: "fail",
     smoke_status: "not_run",
     version_match_status: "not_run",
@@ -78,6 +81,7 @@ function createValidationFailureQuality(errors) {
     canvas_structure_status: "not_run",
     failure_class: "submitter_fixes",
     summary: "Plugin entry failed external.json validation. Fix the listed errors and re-run quality checks.",
+    spec_compliance_output: "Spec compliance check skipped due to external.json validation errors.",
     vally_lint_output: output,
     smoke_output: "Install smoke test skipped due to external.json validation errors.",
     version_match_output: "Version match skipped due to external.json validation errors.",
@@ -86,7 +90,10 @@ function createValidationFailureQuality(errors) {
   };
 }
 
-export async function runExternalPluginPrQualityGates(plugins) {
+export async function runExternalPluginPrQualityGates(
+  plugins,
+  { runQualityGates = runExternalPluginQualityGates } = {},
+) {
   if (!Array.isArray(plugins)) {
     throw new Error("plugins must be an array");
   }
@@ -95,7 +102,7 @@ export async function runExternalPluginPrQualityGates(plugins) {
     const validation = validateExternalPlugin(plugin, "changed-plugin", { policy: "marketplace" });
     const quality = validation.errors.length > 0
       ? createValidationFailureQuality(validation.errors)
-      : await runExternalPluginQualityGates(plugin);
+      : await runQualityGates(plugin);
     return {
       name: plugin?.name ?? "unknown",
       source: plugin?.source ?? {},
@@ -121,7 +128,7 @@ export async function runExternalPluginPrQualityGates(plugins) {
   };
 }
 
-function parseCliArgs(argv) {
+export function parseCliArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
@@ -135,7 +142,7 @@ function parseCliArgs(argv) {
   return args;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const args = parseCliArgs(process.argv.slice(2));
   if (!args["plugins-json"]) {
     console.error("Usage: node ./eng/external-plugin-pr-quality-gates.mjs --plugins-json '<json-array>'");

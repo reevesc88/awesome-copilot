@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import { Writable } from "stream";
 import { spawnSync } from "child_process";
+import { fileURLToPath } from "url";
 import { runLint, LintConsoleReporter } from "@microsoft/vally";
 import { evaluateRefShaConsistency, normalizeCommitSha } from "./lib/external-plugin-source-ref-sha.mjs";
 import { validateAgentPluginManifest } from "./agent-plugin-schema.mjs";
@@ -45,7 +46,7 @@ const INFRA_ERROR_PATTERNS = [
   /etimedout/,
 ];
 
-function truncateOutput(value) {
+export function truncateOutput(value) {
   const normalized = String(value ?? "").replace(/\x1b\[[0-9;]*m/g, "").trim();
   if (normalized.length <= MAX_OUTPUT_LENGTH) {
     return normalized;
@@ -69,7 +70,7 @@ function runCommand(command, args, options = {}) {
   };
 }
 
-function normalizePluginPath(pluginPath) {
+export function normalizePluginPath(pluginPath) {
   if (!pluginPath || pluginPath === "/") {
     return "";
   }
@@ -92,7 +93,7 @@ function hasCanvasKeyword(plugin) {
   );
 }
 
-function resolveFetchSpec(pluginSource) {
+export function resolveFetchSpec(pluginSource) {
   if (pluginSource.sha) {
     return pluginSource.sha;
   }
@@ -113,7 +114,7 @@ function resolveFetchSpec(pluginSource) {
   return ref;
 }
 
-function classifySmokeFailure(output) {
+export function classifySmokeFailure(output) {
   const normalized = String(output ?? "").toLowerCase();
   if (INFRA_ERROR_PATTERNS.some((pattern) => pattern.test(normalized))) {
     return "infra_error";
@@ -188,7 +189,7 @@ function findPluginJson(pluginRoot) {
   return null;
 }
 
-function inspectAgentPluginSpecCompliance(pluginRoot) {
+export function inspectAgentPluginSpecCompliance(pluginRoot) {
       const pluginJsonPath = findPluginJson(pluginRoot);
       if (!pluginJsonPath) {
         return {
@@ -308,7 +309,7 @@ function inspectAgentPluginSpecCompliance(pluginRoot) {
       };
 }
 
-function buildVallyLintArgs(pluginRoot) {
+export function buildVallyLintArgs(pluginRoot) {
   const pluginJsonPath = findPluginJson(pluginRoot);
   if (!pluginJsonPath) {
     // No recognised plugin.json location — lint the whole plugin root and let
@@ -376,7 +377,7 @@ async function runVallyLintGate(pluginRoot) {
   }
 }
 
-function buildEphemeralMarketplace(workDir, plugin) {
+export function buildEphemeralMarketplace(workDir, plugin) {
   const marketplaceDir = path.join(workDir, "marketplace");
   ensureDirectory(marketplaceDir);
 
@@ -1054,7 +1055,7 @@ export async function runExternalPluginQualityGates(plugin) {
   }
 }
 
-function parseCliArgs(argv) {
+export function parseCliArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
@@ -1068,7 +1069,7 @@ function parseCliArgs(argv) {
   return args;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const args = parseCliArgs(process.argv.slice(2));
   if (!args["plugin-json"]) {
     console.error("Usage: node ./eng/external-plugin-quality-gates.mjs --plugin-json '<json>'");

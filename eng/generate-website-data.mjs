@@ -1799,16 +1799,26 @@ async function main() {
 }
 
 export {
+  buildExternalRepoImageUrl,
+  buildExternalRepoTreeUrl,
+  buildResourceIndex,
+  extractCanvasMetadataFromSource,
+  extractExtensionFromPattern,
   extractTitle,
   formatDisplayName,
   generateExtensionsData,
   generateSearchIndex,
+  getDirectoryLastUpdated,
   getImageMimeType,
   hasExtensionEntryPoint,
   joinRepoPath,
   normalizeAuthor,
+  normalizeExtensionScreenshotRole,
   normalizeRepoRelativePath,
+  parseApplyToPatterns,
   pickAssetFile,
+  pluginItemCandidateId,
+  resolvePluginItem,
 };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
