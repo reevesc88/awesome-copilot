@@ -184,10 +184,16 @@ function getCurrentCommitSha() {
 /**
  * Generate agents metadata
  */
-function generateAgentsData(gitDates) {
+function generateAgentsData(
+  gitDates,
+  { agentsDir = AGENTS_DIR, rootFolder = ROOT_FOLDER } = {}
+) {
   const agents = [];
+  if (!fs.existsSync(agentsDir)) {
+    return { items: [], filters: { models: ["(none)"], tools: [] } };
+  }
   const files = fs
-    .readdirSync(AGENTS_DIR)
+    .readdirSync(agentsDir)
     .filter((f) => f.endsWith(".agent.md"));
 
   // Track all unique values for filters
@@ -195,10 +201,10 @@ function generateAgentsData(gitDates) {
   const allTools = new Set();
 
   for (const file of files) {
-    const filePath = path.join(AGENTS_DIR, file);
+    const filePath = path.join(agentsDir, file);
     const frontmatter = parseFrontmatter(filePath);
     const relativePath = path
-      .relative(ROOT_FOLDER, filePath)
+      .relative(rootFolder, filePath)
       .replace(/\\/g, "/");
 
     const model = frontmatter?.model || null;
@@ -252,12 +258,30 @@ function parseApplyToPatterns(applyTo) {
     return applyTo.map((p) => p.trim()).filter((p) => p.length > 0);
   }
 
-  // Handle string format (comma-separated)
+  // Handle string format (comma-separated, preserving commas inside {...} brace globs)
   if (typeof applyTo === "string") {
-    return applyTo
-      .split(",")
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
+    const patterns = [];
+    let current = "";
+    let braceDepth = 0;
+    for (let i = 0; i < applyTo.length; i++) {
+      const ch = applyTo[i];
+      if (ch === "{" && applyTo.indexOf("}", i + 1) !== -1) {
+        braceDepth++;
+      } else if (ch === "}" && braceDepth > 0) {
+        braceDepth--;
+      } else if (ch === "," && braceDepth === 0) {
+        if (current.trim().length > 0) {
+          patterns.push(current.trim());
+        }
+        current = "";
+        continue;
+      }
+      current += ch;
+    }
+    if (current.trim().length > 0) {
+      patterns.push(current.trim());
+    }
+    return patterns;
   }
 
   return [];
@@ -283,10 +307,16 @@ function extractExtensionFromPattern(pattern) {
 /**
  * Generate instructions metadata
  */
-function generateInstructionsData(gitDates) {
+function generateInstructionsData(
+  gitDates,
+  { instructionsDir = INSTRUCTIONS_DIR, rootFolder = ROOT_FOLDER } = {}
+) {
   const instructions = [];
+  if (!fs.existsSync(instructionsDir)) {
+    return { items: [], filters: { patterns: [], extensions: ["(none)"] } };
+  }
   const files = fs
-    .readdirSync(INSTRUCTIONS_DIR)
+    .readdirSync(instructionsDir)
     .filter((f) => f.endsWith(".instructions.md"));
 
   // Track all unique patterns and extensions for filters
@@ -294,10 +324,10 @@ function generateInstructionsData(gitDates) {
   const allExtensions = new Set();
 
   for (const file of files) {
-    const filePath = path.join(INSTRUCTIONS_DIR, file);
+    const filePath = path.join(instructionsDir, file);
     const frontmatter = parseFrontmatter(filePath);
     const relativePath = path
-      .relative(ROOT_FOLDER, filePath)
+      .relative(rootFolder, filePath)
       .replace(/\\/g, "/");
 
     const applyToRaw = frontmatter?.applyTo || null;
@@ -350,24 +380,27 @@ function generateInstructionsData(gitDates) {
 /**
  * Generate skills metadata
  */
-function generateSkillsData(gitDates) {
+function generateSkillsData(
+  gitDates,
+  { skillsDir = SKILLS_DIR, rootFolder = ROOT_FOLDER } = {}
+) {
   const skills = [];
 
-  if (!fs.existsSync(SKILLS_DIR)) {
+  if (!fs.existsSync(skillsDir)) {
     return { items: [], filters: { hasAssets: ["Yes", "No"] } };
   }
 
   const folders = fs
-    .readdirSync(SKILLS_DIR)
-    .filter((f) => fs.statSync(path.join(SKILLS_DIR, f)).isDirectory());
+    .readdirSync(skillsDir)
+    .filter((f) => fs.statSync(path.join(skillsDir, f)).isDirectory());
 
   for (const folder of folders) {
-    const skillPath = path.join(SKILLS_DIR, folder);
+    const skillPath = path.join(skillsDir, folder);
     const metadata = parseSkillMetadata(skillPath);
 
     if (metadata) {
       const relativePath = path
-        .relative(ROOT_FOLDER, skillPath)
+        .relative(rootFolder, skillPath)
         .replace(/\\/g, "/");
 
       // Get all files in the skill folder recursively
@@ -542,18 +575,22 @@ function resolvePluginItem(item, resourceIndex) {
 /**
  * Generate plugins metadata
  */
-function generatePluginsData(gitDates, resourceIndex = {}) {
+function generatePluginsData(
+  gitDates,
+  resourceIndex = {},
+  { pluginsDir = PLUGINS_DIR, extensionsDir = EXTENSIONS_DIR } = {}
+) {
   const plugins = [];
-  if (!fs.existsSync(PLUGINS_DIR)) {
+  if (!fs.existsSync(pluginsDir)) {
     return { items: [], filters: { tags: [] } };
   }
 
   const pluginDirs = fs
-    .readdirSync(PLUGINS_DIR, { withFileTypes: true })
+    .readdirSync(pluginsDir, { withFileTypes: true })
     .filter((d) => d.isDirectory());
 
   for (const dir of pluginDirs) {
-    const pluginDir = path.join(PLUGINS_DIR, dir.name);
+    const pluginDir = path.join(pluginsDir, dir.name);
     const jsonPath = path.join(pluginDir, "plugin.json");
 
     if (!fs.existsSync(jsonPath)) continue;
@@ -565,7 +602,7 @@ function generatePluginsData(gitDates, resourceIndex = {}) {
       const extensionRefs = composition.extensions
         ?.map((entry) => entry.replace(/^\.\/extensions\//, "").replace(/\/$/, ""))
         .filter(Boolean) ?? [];
-      if (fs.existsSync(path.join(EXTENSIONS_DIR, dir.name, "extension.mjs")) && !extensionRefs.includes(dir.name)) {
+      if (fs.existsSync(path.join(extensionsDir, dir.name, "extension.mjs")) && !extensionRefs.includes(dir.name)) {
         extensionRefs.push(dir.name);
       }
       const extensionItems = extensionRefs
@@ -654,7 +691,7 @@ function generatePluginsData(gitDates, resourceIndex = {}) {
   }
 
   // Load external plugins from plugins/external.json
-  const externalJsonPath = path.join(PLUGINS_DIR, "external.json");
+  const externalJsonPath = path.join(pluginsDir, "external.json");
   if (fs.existsSync(externalJsonPath)) {
     try {
       const externalPlugins = JSON.parse(
@@ -946,10 +983,191 @@ function extractCanvasMetadataFromSource(source) {
     return -1;
   }
 
-  function readProp(head, key) {
-    const pattern = new RegExp(`\\b${key}\\s*:\\s*([^,\\n]+)`);
-    const match = pattern.exec(head);
-    return resolveExpression(match?.[1]);
+  function extractTopLevelProps(objectBody) {
+    const props = new Map();
+    let i = 0;
+
+    function skipTrivia() {
+      while (i < objectBody.length) {
+        const ch = objectBody[i];
+        const next = objectBody[i + 1];
+        if (/\s/.test(ch)) {
+          i++;
+          continue;
+        }
+        if (ch === "/" && next === "/") {
+          i += 2;
+          while (i < objectBody.length && objectBody[i] !== "\n") i++;
+          continue;
+        }
+        if (ch === "/" && next === "*") {
+          i += 2;
+          while (
+            i < objectBody.length &&
+            !(objectBody[i] === "*" && objectBody[i + 1] === "/")
+          ) {
+            i++;
+          }
+          i += 2;
+          continue;
+        }
+        break;
+      }
+    }
+
+    function advancePastValueOrMember(stopAtNewline) {
+      let depth = 0;
+      let inSingle = false;
+      let inDouble = false;
+      let inTemplate = false;
+      let escaped = false;
+      let closedBlockAtRoot = false;
+
+      while (i < objectBody.length) {
+        const ch = objectBody[i];
+        const next = objectBody[i + 1];
+        if (escaped) {
+          escaped = false;
+          i++;
+          continue;
+        }
+        if ((inSingle || inDouble || inTemplate) && ch === "\\") {
+          escaped = true;
+          i++;
+          continue;
+        }
+        if (!inDouble && !inTemplate && ch === "'") {
+          inSingle = !inSingle;
+          i++;
+          continue;
+        }
+        if (!inSingle && !inTemplate && ch === '"') {
+          inDouble = !inDouble;
+          i++;
+          continue;
+        }
+        if (!inSingle && !inDouble && ch === "`") {
+          inTemplate = !inTemplate;
+          i++;
+          continue;
+        }
+        if (inSingle || inDouble || inTemplate) {
+          i++;
+          continue;
+        }
+        if (ch === "/" && next === "/") {
+          if (depth === 0 && stopAtNewline) break;
+          i += 2;
+          while (i < objectBody.length && objectBody[i] !== "\n") i++;
+          continue;
+        }
+        if (ch === "/" && next === "*") {
+          i += 2;
+          while (
+            i < objectBody.length &&
+            !(objectBody[i] === "*" && objectBody[i + 1] === "/")
+          ) {
+            i++;
+          }
+          i += 2;
+          continue;
+        }
+        if (ch === "{" || ch === "[" || ch === "(") {
+          depth++;
+          i++;
+          continue;
+        }
+        if (ch === "}" || ch === "]" || ch === ")") {
+          if (depth > 0) {
+            depth--;
+            if (depth === 0 && ch === "}" && !stopAtNewline) {
+              closedBlockAtRoot = true;
+              i++;
+              break;
+            }
+          }
+          i++;
+          continue;
+        }
+        if (depth === 0) {
+          if (ch === ",") break;
+          if (stopAtNewline && (ch === "\n" || ch === "\r")) break;
+        }
+        i++;
+      }
+
+      return closedBlockAtRoot;
+    }
+
+    while (i < objectBody.length) {
+      skipTrivia();
+      if (i >= objectBody.length) break;
+      if (objectBody[i] === ",") {
+        i++;
+        continue;
+      }
+
+      let key = null;
+      const identMatch = /^[A-Za-z_$][\w$]*/.exec(objectBody.slice(i));
+      if (identMatch) {
+        const afterKey = i + identMatch[0].length;
+        const saved = i;
+        i = afterKey;
+        skipTrivia();
+        if (objectBody[i] === ":") {
+          key = identMatch[0];
+          i++;
+        } else {
+          i = saved;
+        }
+      } else if (objectBody[i] === '"' || objectBody[i] === "'") {
+        const quote = objectBody[i];
+        const saved = i;
+        i++;
+        let rawKey = "";
+        let escaped = false;
+        while (i < objectBody.length) {
+          const ch = objectBody[i++];
+          if (escaped) {
+            rawKey += ch;
+            escaped = false;
+            continue;
+          }
+          if (ch === "\\") {
+            escaped = true;
+            continue;
+          }
+          if (ch === quote) break;
+          rawKey += ch;
+        }
+        skipTrivia();
+        if (objectBody[i] === ":") {
+          key = rawKey;
+          i++;
+        } else {
+          i = saved;
+        }
+      }
+
+      if (key !== null) {
+        skipTrivia();
+        const valueStart = i;
+        advancePastValueOrMember(true);
+        const rawExpr = objectBody.slice(valueStart, i);
+        if (!props.has(key)) {
+          props.set(key, resolveExpression(rawExpr));
+        }
+        if (i < objectBody.length && objectBody[i] !== ",") {
+          advancePastValueOrMember(false);
+        }
+        if (objectBody[i] === ",") i++;
+      } else {
+        const closedMethod = advancePastValueOrMember(false);
+        if (!closedMethod && objectBody[i] === ",") i++;
+      }
+    }
+
+    return props;
   }
 
   const canvases = [];
@@ -968,10 +1186,10 @@ function extractCanvasMetadataFromSource(source) {
       break;
     }
     const objectContent = source.slice(objectStart + 1, objectEnd);
-    const header = objectContent.slice(0, 1400);
-    const id = readProp(header, "id");
-    const displayName = readProp(header, "displayName");
-    const description = readProp(header, "description");
+    const props = extractTopLevelProps(objectContent);
+    const id = props.get("id") ?? null;
+    const displayName = props.get("displayName") ?? null;
+    const description = props.get("description") ?? null;
     if (id || displayName || description) {
       canvases.push({
         id: id || null,
@@ -1173,30 +1391,38 @@ function resolveExtensionScreenshots(pluginJson, extensionDir, relPath, ref) {
   };
 }
 
-function generateCanvasManifest(gitDates, commitSha) {
+function generateCanvasManifest(
+  gitDates,
+  commitSha,
+  {
+    extensionsDir = EXTENSIONS_DIR,
+    pluginsDir = PLUGINS_DIR,
+    externalPluginsFile,
+  } = {}
+) {
   const items = [];
 
-  if (!fs.existsSync(EXTENSIONS_DIR)) {
+  if (!fs.existsSync(extensionsDir)) {
     return { items: [], filters: { keywords: [] } };
   }
 
-  const extensionPluginOwners = readExtensionPluginOwners(PLUGINS_DIR);
+  const extensionPluginOwners = readExtensionPluginOwners(pluginsDir);
   const extensionDirs = fs
-    .readdirSync(EXTENSIONS_DIR, { withFileTypes: true })
+    .readdirSync(extensionsDir, { withFileTypes: true })
     .filter((entry) => {
       if (!entry.isDirectory()) return false;
-      return hasExtensionEntryPoint(path.join(EXTENSIONS_DIR, entry.name), entry.name);
+      return hasExtensionEntryPoint(path.join(extensionsDir, entry.name), entry.name);
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
   for (const dir of extensionDirs) {
     const relPath = `extensions/${dir.name}`;
-    const extensionDir = path.join(EXTENSIONS_DIR, dir.name);
+    const extensionDir = path.join(extensionsDir, dir.name);
     const packageJsonPath = path.join(extensionDir, "package.json");
     const packageJson = fs.existsSync(packageJsonPath)
       ? JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"))
       : {};
-    const pluginJsonPath = path.join(PLUGINS_DIR, dir.name, "plugin.json");
+    const pluginJsonPath = path.join(pluginsDir, dir.name, "plugin.json");
     const pluginJson = fs.existsSync(pluginJsonPath)
       ? JSON.parse(fs.readFileSync(pluginJsonPath, "utf-8"))
       : {};
@@ -1267,7 +1493,7 @@ function generateCanvasManifest(gitDates, commitSha) {
     }
   }
 
-  const externalJsonPath = path.join(EXTENSIONS_DIR, "external.json");
+  const externalJsonPath = path.join(extensionsDir, "external.json");
   if (fs.existsSync(externalJsonPath)) {
     try {
       const externalExtensions = JSON.parse(
@@ -1348,11 +1574,15 @@ function generateCanvasManifest(gitDates, commitSha) {
   }
 
   const seenExtensionIds = new Set(items.map((item) => String(item.id).toLowerCase()));
+  const externalPluginOptions = { policy: "marketplace" };
+  if (externalPluginsFile !== undefined) {
+    externalPluginOptions.filePath = externalPluginsFile;
+  }
   const {
     plugins: externalPlugins,
     errors: externalPluginErrors,
     warnings: externalPluginWarnings,
-  } = readExternalPlugins({ policy: "marketplace" });
+  } = readExternalPlugins(externalPluginOptions);
   externalPluginWarnings.forEach((warning) => console.warn(`Warning: ${warning}`));
   if (externalPluginErrors.length > 0) {
     externalPluginErrors.forEach((error) => console.error(`Error: ${error}`));
@@ -1535,8 +1765,11 @@ function generateSearchIndex(
 /**
  * Generate samples/cookbook data from cookbook.yml
  */
-function generateSamplesData() {
-  const cookbookYamlPath = path.join(COOKBOOK_DIR, "cookbook.yml");
+function generateSamplesData({
+  cookbookDir = COOKBOOK_DIR,
+  rootFolder = ROOT_FOLDER,
+} = {}) {
+  const cookbookYamlPath = path.join(cookbookDir, "cookbook.yml");
 
   if (!fs.existsSync(cookbookYamlPath)) {
     console.warn(
@@ -1616,8 +1849,8 @@ function generateSamplesData() {
         const examplePath = `${cookbook.path}/${lang.id}/recipe/${recipe.id}${lang.extension}`;
 
         // Check if files exist
-        const docFullPath = path.join(ROOT_FOLDER, docPath);
-        const exampleFullPath = path.join(ROOT_FOLDER, examplePath);
+        const docFullPath = path.join(rootFolder, docPath);
+        const exampleFullPath = path.join(rootFolder, examplePath);
 
         if (fs.existsSync(docFullPath)) {
           variants[lang.id] = {
@@ -1806,18 +2039,27 @@ export {
   extractExtensionFromPattern,
   extractTitle,
   formatDisplayName,
+  generateAgentsData,
+  generateCanvasManifest,
   generateExtensionsData,
+  generateInstructionsData,
+  generatePluginsData,
+  generateSamplesData,
   generateSearchIndex,
+  generateSkillsData,
   getDirectoryLastUpdated,
+  getExtensionAssetInfo,
   getImageMimeType,
   hasExtensionEntryPoint,
   joinRepoPath,
   normalizeAuthor,
   normalizeExtensionScreenshotRole,
+  normalizeExternalScreenshotRole,
   normalizeRepoRelativePath,
   parseApplyToPatterns,
   pickAssetFile,
   pluginItemCandidateId,
+  resolveExtensionScreenshots,
   resolvePluginItem,
 };
 

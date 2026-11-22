@@ -101,15 +101,15 @@ function parseJsonFile(filePath) {
   }
 }
 
-function getExtensionFolderNames() {
-  if (!fs.existsSync(EXTENSIONS_DIR)) {
+function getExtensionFolderNames(extensionsDir = EXTENSIONS_DIR) {
+  if (!fs.existsSync(extensionsDir)) {
     return [];
   }
 
-  return fs.readdirSync(EXTENSIONS_DIR, { withFileTypes: true })
+  return fs.readdirSync(extensionsDir, { withFileTypes: true })
     .filter((entry) => {
       if (!entry.isDirectory()) return false;
-      const extensionEntryPoint = path.join(EXTENSIONS_DIR, entry.name, "extension.mjs");
+      const extensionEntryPoint = path.join(extensionsDir, entry.name, "extension.mjs");
       return fs.existsSync(extensionEntryPoint);
     })
     .map((entry) => entry.name)
@@ -341,9 +341,14 @@ export function isReusableExtensionRegistered(extensionName, pluginDirectoryName
   return pluginDirectoryNames.has(extensionName) || referencedExtensionNames.has(extensionName);
 }
 
-export function validatePlugins() {
-  const pluginDirs = fs.existsSync(PLUGINS_DIR)
-    ? fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })
+export function validatePlugins({
+  pluginsDir = PLUGINS_DIR,
+  extensionsDir = EXTENSIONS_DIR,
+  rootFolder = ROOT_FOLDER,
+  externalPluginsFile,
+} = {}) {
+  const pluginDirs = fs.existsSync(pluginsDir)
+    ? fs.readdirSync(pluginsDir, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
     : [];
@@ -363,7 +368,11 @@ export function validatePlugins() {
   for (const dir of pluginDirs) {
     console.log(`Validating ${dir}...`);
 
-    const { errors, warnings, plugin } = validatePlugin(dir);
+    const { errors, warnings, plugin } = validatePlugin(dir, {
+      pluginsDir,
+      extensionsDir,
+      rootFolder,
+    });
 
     if (errors.length > 0) {
       console.error(`❌ ${dir}:`);
@@ -397,7 +406,7 @@ export function validatePlugins() {
     }
   }
 
-  for (const dir of getExtensionFolderNames()) {
+  for (const dir of getExtensionFolderNames(extensionsDir)) {
     if (!isReusableExtensionRegistered(dir, pluginDirectoryNames, referencedExtensionNames)) {
       console.error(`❌ extension ${dir}: must be referenced by a plugin or have a standalone manifest at plugins/${dir}/plugin.json`);
       hasErrors = true;
@@ -405,10 +414,14 @@ export function validatePlugins() {
   }
 
   console.log("\nValidating external plugin catalog...");
-  const { plugins: externalPlugins, errors: externalErrors, warnings: externalWarnings } = readExternalPlugins({
+  const externalOptions = {
     localPluginNames,
     policy: "marketplace",
-  });
+  };
+  if (externalPluginsFile !== undefined) {
+    externalOptions.filePath = externalPluginsFile;
+  }
+  const { plugins: externalPlugins, errors: externalErrors, warnings: externalWarnings } = readExternalPlugins(externalOptions);
 
   externalWarnings.forEach((warning) => console.warn(`⚠️  ${warning}`));
 

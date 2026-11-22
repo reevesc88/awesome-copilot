@@ -588,6 +588,7 @@ const main = () => {
 
     const markdown = generateMarkdownReport(reports, contributors.length);
     const outputPath = path.join(process.cwd(), 'reports', 'contributor-report.md');
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, markdown);
 
     console.log(`Report saved to: ${outputPath}`);
