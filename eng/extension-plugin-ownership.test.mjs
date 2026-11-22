@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import {
   buildExtensionPluginOwners,
+  readExtensionPluginOwners,
   resolveExtensionPluginName,
 } from "./extension-plugin-ownership.mjs";
 
@@ -58,4 +62,33 @@ test("preserves the extension name when no plugin owns it", () => {
     resolveExtensionPluginName("daily-focus-board", new Map()),
     "daily-focus-board"
   );
+});
+
+test("readExtensionPluginOwners reads plugin manifests from disk and handles missing directories or non-extension refs", (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "awesome-copilot-ext-owners-"));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+
+  assert.equal(readExtensionPluginOwners(path.join(tempRoot, "missing")).size, 0);
+
+  const pluginsDir = path.join(tempRoot, "plugins");
+  fs.mkdirSync(path.join(pluginsDir, "bundle-a"), { recursive: true });
+  fs.mkdirSync(path.join(pluginsDir, "no-manifest"), { recursive: true });
+  fs.writeFileSync(path.join(pluginsDir, "external.json"), "[]\n", "utf8");
+
+  fs.writeFileSync(
+    path.join(pluginsDir, "bundle-a", "plugin.json"),
+    JSON.stringify({
+      name: "  ",
+      extensions: {
+        [namespace]: {
+          extensions: ["./extensions/shared-canvas/", "./skills/not-an-extension", 42],
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const owners = readExtensionPluginOwners(pluginsDir);
+  assert.equal(resolveExtensionPluginName("shared-canvas", owners), "bundle-a");
+  assert.equal(resolveExtensionPluginName("bundle-a", owners), "bundle-a");
 });
