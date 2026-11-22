@@ -33,25 +33,25 @@ test("getGitFileDates and getGitFileDate return latest commit timestamps and sup
   fs.writeFileSync(path.join(repoDir, "skills", "my skill", "SKILL.md"), "v1\n", "utf8");
   runGit(repoDir, ["add", "-A"]);
   runGit(repoDir, ["commit", "-m", "initial", "--quiet"], {
-    GIT_AUTHOR_DATE: "2026-01-10T08:00:00+00:00",
-    GIT_COMMITTER_DATE: "2026-01-10T08:00:00+00:00",
+    GIT_AUTHOR_DATE: "2026-01-10T08:00:00+08:00",
+    GIT_COMMITTER_DATE: "2026-01-10T08:00:00+08:00",
   });
 
   // Update alpha.agent.md in a newer commit
   fs.writeFileSync(path.join(repoDir, "agents", "alpha.agent.md"), "v2\n", "utf8");
   runGit(repoDir, ["add", "-A"]);
   runGit(repoDir, ["commit", "-m", "update alpha", "--quiet"], {
-    GIT_AUTHOR_DATE: "2026-02-15T12:30:00+00:00",
-    GIT_COMMITTER_DATE: "2026-02-15T12:30:00+00:00",
+    GIT_AUTHOR_DATE: "2026-02-15T12:30:00+08:00",
+    GIT_COMMITTER_DATE: "2026-02-15T12:30:00+08:00",
   });
 
   const dates = getGitFileDates(["agents/", "skills/my skill/"], repoDir);
-  assert.equal(dates.get("agents/alpha.agent.md"), "2026-02-15T12:30:00Z");
-  assert.equal(dates.get("skills/my skill/SKILL.md"), "2026-01-10T08:00:00Z");
+  assert.equal(dates.get("agents/alpha.agent.md"), "2026-02-15T12:30:00+08:00");
+  assert.equal(dates.get("skills/my skill/SKILL.md"), "2026-01-10T08:00:00+08:00");
 
   assert.equal(
     getGitFileDate("skills/my skill/SKILL.md", repoDir),
-    "2026-01-10T08:00:00Z",
+    "2026-01-10T08:00:00+08:00",
   );
   assert.equal(getGitFileDate("agents/untracked.agent.md", repoDir), null);
 });
