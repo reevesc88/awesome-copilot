@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { afterEach, test } from "node:test";
 import {
+  applyQualityGateResult,
   evaluateExternalPluginIssue,
+  isPublicAddress,
+  parseExternalPluginIssueBody,
+  parseMarkReadyForReviewCommand,
+  parseRerunIntakeCommand,
   PinnedAddressDispatcher,
   validateCanvasPluginMetadata,
 } from "./external-plugin-intake.mjs";
@@ -365,6 +370,8 @@ function jsonResponse(payload, { status = 200, text } = {}) {
   };
 }
 
+const PUBLIC_HOMEPAGE_LOOKUP = async () => [{ address: "93.184.216.34", family: 4 }];
+
 test("evaluateExternalPluginIssue surfaces repository and homepage review signals", async () => {
   installMockFetch();
   const githubFetch = global.fetch;
@@ -381,7 +388,10 @@ test("evaluateExternalPluginIssue surfaces repository and homepage review signal
       "### Homepage URL\n\nhttps://example.com/pricing",
     ),
   };
-  const result = await evaluateExternalPluginIssue({ issue });
+  const result = await evaluateExternalPluginIssue({
+    issue,
+    lookupFn: PUBLIC_HOMEPAGE_LOOKUP,
+  });
 
   assert.equal(result.valid, true);
   assert.deepEqual(result.reviewSignals.homepage.signals, ["pricing", "sales", "trial"]);
@@ -422,9 +432,13 @@ test("homepage inspection limits streamed content to 512 KB", async () => {
     ),
   };
 
-  const result = await evaluateExternalPluginIssue({ issue });
+  const result = await evaluateExternalPluginIssue({
+    issue,
+    lookupFn: PUBLIC_HOMEPAGE_LOOKUP,
+  });
 
   assert.equal(result.valid, true);
+  assert.equal(result.reviewSignals.homepage.status, "pass");
   assert.deepEqual(result.reviewSignals.homepage.signals, []);
 });
 
@@ -509,4 +523,104 @@ test("evaluateExternalPluginIssue passes when ref and sha resolve to the same co
     result.errors.some((error) => error.includes("must reference the same commit")),
     false,
   );
+});
+
+test("isPublicAddress filters private, loopback, link-local, documentation, and mapped IPv4/IPv6 ranges", () => {
+  assert.equal(isPublicAddress("93.184.216.34"), true);
+  assert.equal(isPublicAddress("127.0.0.1"), false);
+  assert.equal(isPublicAddress("10.0.0.5"), false);
+  assert.equal(isPublicAddress("100.64.1.1"), false);
+  assert.equal(isPublicAddress("169.254.169.254"), false);
+  assert.equal(isPublicAddress("172.16.0.1"), false);
+  assert.equal(isPublicAddress("192.168.1.1"), false);
+  assert.equal(isPublicAddress("224.0.0.1"), false);
+
+  assert.equal(isPublicAddress("2606:2800:220:1:248:1893:25c8:1946"), true);
+  assert.equal(isPublicAddress("::1"), false);
+  assert.equal(isPublicAddress("fe80::1"), false);
+  assert.equal(isPublicAddress("fd00::1"), false);
+  assert.equal(isPublicAddress("2001:db8::1"), false);
+  assert.equal(isPublicAddress("::ffff:127.0.0.1"), false);
+  assert.equal(isPublicAddress("::ffff:93.184.216.34"), true);
+  assert.equal(isPublicAddress("not-an-ip"), false);
+});
+
+test("parseExternalPluginIssueBody, command parsers, and applyQualityGateResult handle legacy fields, overrides, and merged states", () => {
+  assert.equal(parseRerunIntakeCommand("Updated tag.\n  /rerun-intake "), true);
+  assert.equal(parseRerunIntakeCommand("/rerun-intake-later"), false);
+
+  assert.deepEqual(
+    parseMarkReadyForReviewCommand("Reviewed manually.\n/mark-ready-for-review transient CLI issue"),
+    {
+      command: "/mark-ready-for-review",
+      reason: "transient CLI issue",
+    },
+  );
+  assert.equal(parseMarkReadyForReviewCommand("No command here"), undefined);
+
+  // Supports legacy "Immutable ref to review" heading + legacy checklist item text
+  const legacyBody = [
+    "<!-- external-plugin-submission -->",
+    "### Plugin name\n\nlegacy-pack",
+    "### Short description\n\nLegacy template submission",
+    "### GitHub repository\n\nhttps://github.com/octo/legacy-pack.git",
+    "### Immutable ref to review\n\nv2.0.0",
+    "### Version\n\n2.0.0",
+    "### License identifier\n\nMIT",
+    "### Author name\n\nOcto",
+    "### Keywords\n\nci, automation\nworkflow",
+    "### Submission checklist",
+    "- [x] The plugin lives in a public GitHub repository.",
+    "- [x] The ref I provided is an immutable release tag or full 40-character commit SHA, not a branch.",
+    "- [x] This submission follows this repository's contribution, security, and responsible AI policies.",
+    "- [x] This plugin is not already listed in the Awesome Copilot marketplace.",
+  ].join("\n\n");
+
+  const parsedLegacy = parseExternalPluginIssueBody(legacyBody);
+  assert.equal(parsedLegacy.markerPresent, true);
+  assert.deepEqual(parsedLegacy.errors, []);
+  assert.equal(parsedLegacy.plugin.source.repo, "octo/legacy-pack");
+  assert.equal(parsedLegacy.plugin.source.ref, "v2.0.0");
+  assert.deepEqual(parsedLegacy.plugin.keywords, ["ci", "automation", "workflow"]);
+
+  // applyQualityGateResult merges states and workflow run links
+  const baseEval = {
+    valid: true,
+    plugin: parsedLegacy.plugin,
+    warnings: ["submission: minor note"],
+    commentMarker: "<!-- external-plugin-intake -->",
+    commentBody: "initial",
+  };
+
+  const specWarnMerged = applyQualityGateResult(
+    JSON.stringify(baseEval),
+    JSON.stringify({
+      overall_status: "pass",
+      failure_class: "none",
+      spec_compliance_status: "warning",
+      spec_compliance_output: "manifest location warning",
+      vally_lint_status: "pass",
+      smoke_status: "pass",
+    }),
+    "98765",
+    "reevesc88",
+    "awesome-copilot",
+  );
+  assert.equal(specWarnMerged.intakeState, "ready-for-review");
+  assert.match(specWarnMerged.commentBody, /passed with spec warnings/);
+  assert.match(specWarnMerged.commentBody, /actions\/runs\/98765/);
+
+  const submitterFixMerged = applyQualityGateResult(baseEval, {
+    overall_status: "fail",
+    failure_class: "submitter_fixes",
+    vally_lint_status: "fail",
+  });
+  assert.equal(submitterFixMerged.intakeState, "requires-submitter-fixes");
+
+  const infraMerged = applyQualityGateResult(baseEval, {
+    overall_status: "infra_error",
+    failure_class: "infra",
+    smoke_status: "infra_error",
+  });
+  assert.equal(infraMerged.intakeState, "awaiting-review");
 });
