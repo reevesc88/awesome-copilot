@@ -16,11 +16,11 @@ export const EXTERNAL_PLUGIN_INTAKE_COMMENT_MARKER = "<!-- external-plugin-intak
 export const RERUN_INTAKE_COMMAND = "/rerun-intake";
 export const MARK_READY_FOR_REVIEW_COMMAND = "/mark-ready-for-review";
 const RERUN_INTAKE_COMMAND_PATTERN = new RegExp(
-  `^\\s*${RERUN_INTAKE_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+  `^\\s*${RERUN_INTAKE_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`,
   "m",
 );
 const MARK_READY_FOR_REVIEW_COMMAND_PATTERN = new RegExp(
-  `^\\s*${MARK_READY_FOR_REVIEW_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+  `^\\s*${MARK_READY_FOR_REVIEW_COMMAND.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=\\s|$)`,
   "m",
 );
 const PLUGINS_DIR = path.join(ROOT_FOLDER, "plugins");
@@ -292,7 +292,7 @@ async function fetchGitHubFile(repo, filePath, ref, token) {
   );
 }
 
-function isPublicAddress(address) {
+export function isPublicAddress(address) {
   if (isIP(address) === 4) {
     const octets = address.split(".").map(Number);
     const value = octets.reduce((result, octet) => (result * 256) + octet, 0);
@@ -346,8 +346,8 @@ function isPublicAddress(address) {
   );
 }
 
-async function assertPublicUrl(url) {
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
+async function assertPublicUrl(url, lookupFn = lookup) {
+  const addresses = await lookupFn(url.hostname, { all: true, verbatim: true });
   if (!addresses.length || addresses.some(({ address }) => !isPublicAddress(address))) {
     throw new Error("Homepage URL resolves to a non-public address.");
   }
@@ -436,7 +436,7 @@ async function readHomepageBody(response) {
   }
 }
 
-async function inspectHomepage(homepage) {
+export async function inspectHomepage(homepage, { lookupFn = lookup } = {}) {
   const result = {
     status: "not_run",
     url: homepage,
@@ -465,7 +465,7 @@ async function inspectHomepage(homepage) {
     let url = parsedUrl;
     let response;
     for (let redirectCount = 0; redirectCount <= HOMEPAGE_MAX_REDIRECTS; redirectCount += 1) {
-      const address = await assertPublicUrl(url);
+      const address = await assertPublicUrl(url, lookupFn);
       response = await fetch(url, {
         redirect: "manual",
         headers: { Accept: "text/html,text/plain;q=0.9", "User-Agent": "awesome-copilot-external-plugin-intake" },
@@ -1324,7 +1324,7 @@ export function applyQualityGateResult(baseEvaluation, qualityGateResult, runId,
   };
 }
 
-export async function evaluateExternalPluginIssue({ issue, token, runId, owner, repo } = {}) {
+export async function evaluateExternalPluginIssue({ issue, token, runId, owner, repo, lookupFn } = {}) {
   const issueBody = issue?.body ?? "";
   const parsed = parseExternalPluginIssueBody(issueBody);
   const errors = [...parsed.errors];
@@ -1355,7 +1355,10 @@ export async function evaluateExternalPluginIssue({ issue, token, runId, owner, 
   if (parsed.plugin?.source?.repo && (parsed.plugin?.source?.ref || parsed.plugin?.source?.sha)) {
     repositorySignals = await validateRemoteRepository(parsed.plugin.source.repo, parsed.plugin.source, errors, warnings, token);
   }
-  const homepageSignals = await inspectHomepage(parsed.plugin?.homepage);
+  const homepageSignals = await inspectHomepage(
+    parsed.plugin?.homepage,
+    lookupFn ? { lookupFn } : undefined,
+  );
   const reviewSignals = { repository: repositorySignals, homepage: homepageSignals };
 
   if (isCanvasPlugin) {

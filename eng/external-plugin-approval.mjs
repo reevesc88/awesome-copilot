@@ -101,10 +101,14 @@ function pluginsMatch(left, right) {
   return false;
 }
 
-export function upsertExternalPlugin(plugin, { filePath = EXTERNAL_PLUGINS_FILE } = {}) {
+export function upsertExternalPlugin(
+  plugin,
+  { filePath = EXTERNAL_PLUGINS_FILE, localPluginNames } = {},
+) {
+  const resolvedLocalNames = localPluginNames ?? readLocalPluginNames();
   const { plugins, errors } = readExternalPlugins({
     filePath,
-    localPluginNames: readLocalPluginNames(),
+    localPluginNames: resolvedLocalNames,
     policy: "marketplace",
   });
 
@@ -125,7 +129,7 @@ export function upsertExternalPlugin(plugin, { filePath = EXTERNAL_PLUGINS_FILE 
   updatedPlugins.sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
 
   const { errors: validationErrors } = validateExternalPlugins(updatedPlugins, {
-    localPluginNames: readLocalPluginNames(),
+    localPluginNames: resolvedLocalNames,
     policy: "marketplace",
   });
 
@@ -145,7 +149,7 @@ export function upsertExternalPlugin(plugin, { filePath = EXTERNAL_PLUGINS_FILE 
   };
 }
 
-function readCliArgs(argv) {
+export function readCliArgs(argv) {
   const args = {};
 
   for (let index = 0; index < argv.length; index += 1) {

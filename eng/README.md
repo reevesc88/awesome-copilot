@@ -56,6 +56,6 @@ These are maintainer utilities. They are intentionally on-demand only (but could
 
 ## Testing & maintenance
 
-- Run `npm test` (`node --test "./eng/**/*.test.mjs"`) to execute all **121 unit tests across 15 `*.test.mjs` files** in `eng/` using Node's built-in `node:test` runner.
+- Run `npm test` (`node --test "./eng/**/*.test.mjs"`) to execute all **166 unit tests across 28 `*.test.mjs` files** in `eng/` using Node's built-in `node:test` runner.
 - Helper functions have small, deterministic behavior and include JSDoc comments.
 - The `getMissingContributors` function in `contributor-report.mjs` is the single source of truth for detecting missing contributors from `all-contributors check` output.

@@ -3,21 +3,23 @@
 import fs from "fs";
 import path from "path";
 import readline from "readline";
-import { SKILLS_DIR } from "./constants.mjs";
+import { fileURLToPath } from "url";
+import {
+  SKILLS_DIR,
+  SKILL_DESCRIPTION_MAX_LENGTH,
+  SKILL_DESCRIPTION_MIN_LENGTH,
+  SKILL_NAME_MAX_LENGTH,
+  SKILL_NAME_MIN_LENGTH,
+} from "./constants.mjs";
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-function prompt(question) {
-  return new Promise((resolve) => {
-    rl.question(question, resolve);
-  });
+export function formatYamlSingleQuoted(value) {
+  const normalized = String(value ?? "")
+    .replace(/\r?\n/g, " ")
+    .trim();
+  return `'${normalized.replaceAll("'", "''")}'`;
 }
 
-function parseArgs() {
-  const args = process.argv.slice(2);
+export function parseArgs(args = process.argv.slice(2)) {
   const out = { name: undefined, description: undefined };
 
   for (let i = 0; i < args.length; i++) {
@@ -26,12 +28,12 @@ function parseArgs() {
       out.name = args[i + 1];
       i++;
     } else if (a.startsWith("--name=")) {
-      out.name = a.split("=")[1];
+      out.name = a.slice(a.indexOf("=") + 1);
     } else if (a === "--description" || a === "-d") {
       out.description = args[i + 1];
       i++;
     } else if (a.startsWith("--description=")) {
-      out.description = a.split("=")[1];
+      out.description = a.slice(a.indexOf("=") + 1);
     } else if (!a.startsWith("-") && !out.name) {
       out.name = a;
     }
@@ -40,56 +42,84 @@ function parseArgs() {
   return out;
 }
 
-async function createSkillTemplate() {
+export async function createSkillTemplate({
+  argv = process.argv.slice(2),
+  promptFn,
+  skillsDir = SKILLS_DIR,
+  exit = (code) => process.exit(code),
+} = {}) {
+  let rl = null;
+  const ask =
+    promptFn ??
+    ((question) => {
+      if (!rl) {
+        rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+      }
+      return new Promise((resolve) => {
+        rl.question(question, resolve);
+      });
+    });
+
   try {
     console.log("🎯 Agent Skills Creator");
     console.log(
       "This tool will help you create a new skill following the Agent Skills specification.\n"
     );
 
-    const parsed = parseArgs();
+    const parsed = parseArgs(argv);
 
     // Get skill name
     let skillName = parsed.name;
     if (!skillName) {
-      skillName = await prompt("Skill name (lowercase, hyphens only): ");
+      skillName = await ask("Skill name (lowercase, hyphens only): ");
     }
 
     // Validate skill name format
     if (!skillName) {
       console.error("❌ Skill name is required");
-      process.exit(1);
+      return exit(1);
     }
 
-    if (!/^[a-z0-9-]+$/.test(skillName)) {
+    if (
+      !/^[a-z0-9-]+$/.test(skillName) ||
+      skillName.length < SKILL_NAME_MIN_LENGTH ||
+      skillName.length > SKILL_NAME_MAX_LENGTH
+    ) {
       console.error(
-        "❌ Skill name must contain only lowercase letters, numbers, and hyphens"
+        `❌ Skill name must be ${SKILL_NAME_MIN_LENGTH}-${SKILL_NAME_MAX_LENGTH} characters containing only lowercase letters, numbers, and hyphens`
       );
-      process.exit(1);
+      return exit(1);
     }
 
-    const skillFolder = path.join(SKILLS_DIR, skillName);
+    const skillFolder = path.join(skillsDir, skillName);
 
     // Check if folder already exists
     if (fs.existsSync(skillFolder)) {
       console.log(`⚠️  Skill folder ${skillName} already exists at ${skillFolder}`);
       console.log("💡 Please choose a different name or edit the existing skill.");
-      process.exit(1);
+      return exit(1);
     }
 
     // Get description
     let description = parsed.description;
     if (!description) {
-      description = await prompt(
+      description = await ask(
         "Description (what this skill does and when to use it): "
       );
     }
 
-    if (!description || description.trim().length < 10) {
+    const trimmedDescription = description ? description.trim() : "";
+    if (
+      trimmedDescription.length < SKILL_DESCRIPTION_MIN_LENGTH ||
+      trimmedDescription.length > SKILL_DESCRIPTION_MAX_LENGTH
+    ) {
       console.error(
-        "❌ Description is required and must be at least 10 characters (max 1024)"
+        `❌ Description is required and must be at least ${SKILL_DESCRIPTION_MIN_LENGTH} characters (max ${SKILL_DESCRIPTION_MAX_LENGTH})`
       );
-      process.exit(1);
+      return exit(1);
     }
 
     // Get skill title (display name)
@@ -98,7 +128,7 @@ async function createSkillTemplate() {
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ");
 
-    let skillTitle = await prompt(`Skill title (default: ${defaultTitle}): `);
+    let skillTitle = await ask(`Skill title (default: ${defaultTitle}): `);
     if (!skillTitle.trim()) {
       skillTitle = defaultTitle;
     }
@@ -109,7 +139,7 @@ async function createSkillTemplate() {
     // Create SKILL.md template
     const skillMdContent = `---
 name: ${skillName}
-description: ${description}
+description: ${formatYamlSingleQuoted(trimmedDescription)}
 ---
 
 # ${skillTitle}
@@ -180,7 +210,7 @@ Use this skill when you need to:
     console.log(`✅ Created SKILL.md: ${skillFilePath}`);
 
     // Ask if they want to add bundled assets
-    const addAssets = await prompt(
+    const addAssets = await ask(
       "\nWould you like to add bundled assets? (helper scripts, templates, etc.) [y/N]: "
     );
 
@@ -207,13 +237,15 @@ Use this skill when you need to:
     console.log(
       "   - Project Documentation: AGENTS.md (section on Agent Skills)"
     );
+    return skillFolder;
   } catch (error) {
     console.error(`❌ Error creating skill template: ${error.message}`);
-    process.exit(1);
+    return exit(1);
   } finally {
-    rl.close();
+    rl?.close();
   }
 }
 
-// Run the interactive creation process
-createSkillTemplate();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  createSkillTemplate();
+}

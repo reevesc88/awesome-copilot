@@ -112,7 +112,7 @@ export function restoreManifestFromMaterializedFiles(pluginPath) {
   return changed;
 }
 
-function cleanPlugin(pluginPath) {
+export function cleanPlugin(pluginPath) {
   const manifestUpdated = restoreManifestFromMaterializedFiles(pluginPath);
   if (manifestUpdated) {
     console.log(`  Updated ${path.basename(pluginPath)}/plugin.json`);
@@ -178,7 +178,7 @@ export function cleanMaterializedExtensionPlugin(extensionPath) {
   return { removed: count, manifestUpdated };
 }
 
-function isExtensionPluginDirectory(extensionPath) {
+export function isExtensionPluginDirectory(extensionPath) {
   if (fs.existsSync(path.join(extensionPath, "extension.mjs"))) {
     return true;
   }
@@ -274,15 +274,17 @@ function toPosixPath(filePath) {
   return filePath.split(path.sep).join("/");
 }
 
-function main() {
+export function cleanMaterializedPlugins({
+  pluginsDir = PLUGINS_DIR,
+  extensionsDir = EXTENSIONS_DIR,
+} = {}) {
   console.log("Cleaning materialized files from plugins...\n");
 
-  if (!fs.existsSync(PLUGINS_DIR)) {
-    console.error(`Error: plugins directory not found at ${PLUGINS_DIR}`);
-    process.exit(1);
+  if (!fs.existsSync(pluginsDir)) {
+    throw new Error(`plugins directory not found at ${pluginsDir}`);
   }
 
-  const pluginDirs = fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })
+  const pluginDirs = fs.readdirSync(pluginsDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name)
     .sort();
@@ -290,21 +292,21 @@ function main() {
   let total = 0;
   let manifestsUpdated = 0;
   for (const dirName of pluginDirs) {
-    const { removed, manifestUpdated } = cleanPlugin(path.join(PLUGINS_DIR, dirName));
+    const { removed, manifestUpdated } = cleanPlugin(path.join(pluginsDir, dirName));
     total += removed;
     if (manifestUpdated) {
       manifestsUpdated++;
     }
   }
 
-  if (fs.existsSync(EXTENSIONS_DIR)) {
-    const extensionDirs = fs.readdirSync(EXTENSIONS_DIR, { withFileTypes: true })
+  if (fs.existsSync(extensionsDir)) {
+    const extensionDirs = fs.readdirSync(extensionsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
 
     for (const dirName of extensionDirs) {
-      const extensionPath = path.join(EXTENSIONS_DIR, dirName);
+      const extensionPath = path.join(extensionsDir, dirName);
       if (!isExtensionPluginDirectory(extensionPath)) {
         continue;
       }
@@ -324,6 +326,17 @@ function main() {
     if (manifestsUpdated > 0) {
       console.log(`✅ Updated ${manifestsUpdated} plugin manifest(s) to restore and normalize spec entries.`);
     }
+  }
+
+  return { removed: total, manifestsUpdated };
+}
+
+function main() {
+  try {
+    cleanMaterializedPlugins();
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    process.exit(1);
   }
 }
 
