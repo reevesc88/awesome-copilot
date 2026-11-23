@@ -264,3 +264,59 @@ test("buildCategoryReadme promotes H2 to H1 with empty fallback and writeFileIfC
   writeFileIfChanged(targetFile, `${upgraded}\nUpdated`);
   assert.notEqual(fs.statSync(targetFile).mtime.getTime(), backdated.getTime());
 });
+
+test("extractTitle, MCP registry matchers, and section generators handle plain markdown, missing dirs, and malformed plugins", (t) => {
+  const root = makeTempDir(t);
+
+  // Plain .md file: H1 outside code block, filename fallback, and missing file fallback
+  const plainHeading = path.join(root, "doc_with-heading.md");
+  fs.writeFileSync(plainHeading, "````\n# Ignored\n````\n# Actual Doc Heading\n", "utf8");
+  assert.equal(extractTitle(plainHeading), "Actual Doc Heading");
+
+  const plainFallback = path.join(root, "plain_fallback-note.md");
+  fs.writeFileSync(plainFallback, "No heading in this file.\n", "utf8");
+  assert.equal(extractTitle(plainFallback), "Plain Fallback Note");
+  assert.equal(extractTitle(path.join(root, "missing_doc-name.md")), "Missing Doc Name");
+  assert.equal(extractDescription(plainFallback), null);
+
+  // Unknown badge type falls back to instructions AKA URL; empty MCP server list returns ""
+  assert.match(makeBadges("custom/item.md", "unknown-kind"), /install\/instructions\?url=/);
+  assert.equal(generateMcpServerLinks([], []), "");
+  assert.equal(generateMcpServerLinks(null, []), "");
+
+  // String server names + exact fullName match + -mcp suffix match
+  const registry = [
+    { name: "org/exact-server", displayName: "other", fullName: "org/exact-server" },
+    { name: "org/github-mcp", displayName: "gh-display", fullName: "org/github-mcp" },
+  ];
+  const mcpLinks = generateMcpServerLinks(["org/exact-server", "github"], registry);
+  assert.match(mcpLinks, /\[org\/exact-server\]\(https:\/\/github\.com\/mcp\/org\/exact-server\)/);
+  assert.match(mcpLinks, /\[github\]\(https:\/\/github\.com\/mcp\/org\/github-mcp\)/);
+
+  // Missing and empty directories return ""
+  const missingDir = path.join(root, "nope");
+  assert.equal(generateInstructionsSection(missingDir), "");
+  assert.equal(generateAgentsSection(missingDir, []), "");
+  assert.equal(generateHooksSection(missingDir), "");
+  assert.equal(generateWorkflowsSection(missingDir), "");
+  assert.equal(generateSkillsSection(missingDir), "");
+  assert.equal(generateFeaturedPluginsSection(missingDir), "");
+
+  const emptyDir = path.join(root, "empty");
+  fs.mkdirSync(emptyDir);
+  assert.equal(generateInstructionsSection(emptyDir), "");
+  assert.equal(generateAgentsSection(emptyDir, []), "");
+  assert.equal(generateHooksSection(emptyDir), "");
+  assert.equal(generateWorkflowsSection(emptyDir), "");
+  assert.equal(generateSkillsSection(emptyDir), "");
+
+  // generatePluginsSection auto-creates missing pluginsDir, skips corrupt plugin.json, and returns "" when none valid
+  const autoPluginsDir = path.join(root, "auto-plugins");
+  assert.equal(generatePluginsSection(autoPluginsDir), "");
+  assert.equal(fs.existsSync(autoPluginsDir), true);
+
+  fs.mkdirSync(path.join(autoPluginsDir, "broken-plugin"));
+  fs.writeFileSync(path.join(autoPluginsDir, "broken-plugin", "plugin.json"), "{bad", "utf8");
+  assert.equal(generatePluginsSection(autoPluginsDir), "");
+  assert.equal(generateFeaturedPluginsSection(autoPluginsDir), "");
+});

@@ -4,6 +4,7 @@ import { afterEach, test } from "node:test";
 import {
   applyQualityGateResult,
   evaluateExternalPluginIssue,
+  inspectHomepage,
   isPublicAddress,
   parseExternalPluginIssueBody,
   parseMarkReadyForReviewCommand,
@@ -621,6 +622,138 @@ test("parseExternalPluginIssueBody, command parsers, and applyQualityGateResult 
     overall_status: "infra_error",
     failure_class: "infra",
     smoke_status: "infra_error",
+    smoke_output: "copilot CLI unavailable",
+    vally_lint_output: "lint log",
+    version_match_output: "version log",
+    ref_sha_consistency_output: "ref sha log",
+    canvas_structure_output: "canvas log",
   });
   assert.equal(infraMerged.intakeState, "awaiting-review");
+  assert.match(infraMerged.commentBody, /copilot CLI unavailable/);
+  assert.match(infraMerged.commentBody, /Canvas structure output/);
+
+  // Invalid base evaluation keeps original commentBody and requires-submitter-fixes
+  const invalidBase = { valid: false, commentBody: "invalid-comment" };
+  const invalidMerged = applyQualityGateResult(invalidBase, null);
+  assert.equal(invalidMerged.intakeState, "requires-submitter-fixes");
+  assert.equal(invalidMerged.commentBody, "invalid-comment");
+});
+
+test("inspectHomepage, validateCanvasPluginMetadata, and evaluateExternalPluginIssue cover redirect, rate-limit, private/archived, and manifest error branches", async () => {
+  // Unsupported URL protocols and invalid URLs in inspectHomepage
+  assert.equal((await inspectHomepage("")).status, "not_run");
+  assert.equal((await inspectHomepage("not a url")).status, "warning");
+  assert.equal((await inspectHomepage("ftp://example.com")).status, "warning");
+
+  // Redirect chain exceeding max redirects and redirect to unsupported protocol
+  let hop = 0;
+  global.fetch = async () => ({
+    ok: false,
+    status: 302,
+    headers: new Headers({ location: `https://example.com/hop-${++hop}` }),
+  });
+  const redirectOverflow = await inspectHomepage("https://example.com/start", {
+    lookupFn: PUBLIC_HOMEPAGE_LOOKUP,
+  });
+  assert.equal(redirectOverflow.status, "warning");
+  assert.match(redirectOverflow.output, /exceeded the redirect limit/);
+
+  global.fetch = async () => ({
+    ok: false,
+    status: 302,
+    headers: new Headers({ location: "javascript:alert(1)" }),
+  });
+  const badRedirectProto = await inspectHomepage("https://example.com/start", {
+    lookupFn: PUBLIC_HOMEPAGE_LOOKUP,
+  });
+  assert.match(badRedirectProto.output, /unsupported protocol/);
+
+  global.fetch = async () => ({ ok: false, status: 503, headers: new Headers() });
+  const httpErrorHome = await inspectHomepage("https://example.com/down", {
+    lookupFn: PUBLIC_HOMEPAGE_LOOKUP,
+  });
+  assert.match(httpErrorHome.output, /HTTP 503/);
+
+  // Canvas metadata errors: missing locator, invalid JSON, wrong logo, misspelled extenions, bad extensions, non-file preview
+  const missingLocatorErrors = [];
+  await validateCanvasPluginMetadata(
+    { keywords: ["canvas"], source: { repo: REPO } },
+    missingLocatorErrors,
+    [],
+  );
+  assert.match(missingLocatorErrors[0], /must provide "Ref to review"/);
+
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes("/contents/plugins/upgrade-agent/.github/plugin/plugin.json")) {
+      return jsonResponse(
+        fileNode(JSON.stringify({ logo: "wrong.png", extenions: ".", extensions: "bad" })),
+      );
+    }
+    if (u.includes("/contents/plugins/upgrade-agent/assets/preview.png")) {
+      return jsonResponse({ type: "dir" });
+    }
+    if (u.includes(`/git/trees/${SHA}`)) {
+      return jsonResponse(treeResponse([treeEntry("plugins", "tree", TREE_PLUGINS)]).data);
+    }
+    if (u.includes(`/git/trees/${TREE_PLUGINS}`)) {
+      return jsonResponse(treeResponse([treeEntry("upgrade-agent", "tree", TREE_UPGRADE_AGENT)]).data);
+    }
+    if (u.includes(`/git/trees/${TREE_UPGRADE_AGENT}`)) {
+      return jsonResponse(treeResponse([treeEntry("extensions", "tree", TREE_EXTENSIONS)]).data);
+    }
+    if (u.includes(`/git/trees/${TREE_EXTENSIONS}`)) {
+      return jsonResponse(treeResponse([treeEntry("extension.mjs", "blob")]).data);
+    }
+    return jsonResponse({}, { status: 404 });
+  };
+
+  const canvasErrors = [];
+  await validateCanvasPluginMetadata(
+    { keywords: ["canvas"], source: { repo: REPO, path: PLUGIN_ROOT, sha: SHA } },
+    canvasErrors,
+    [],
+  );
+  assert.ok(canvasErrors.some((e) => e.includes('set "logo"')));
+  assert.ok(canvasErrors.some((e) => e.includes('misspelled key "extenions"')));
+  assert.ok(canvasErrors.some((e) => e.includes('must be "extensions"')));
+  assert.ok(canvasErrors.some((e) => e.includes('"assets/preview.png" must be a file')));
+
+  // Remote repository: private + archived + 422 non-commit tag object
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (u === `https://api.github.com/repos/${INTAKE_REPO}`) {
+      return jsonResponse({ private: true, archived: true });
+    }
+    if (u === `https://api.github.com/repos/${INTAKE_REPO}/git/commits/${PROVIDED_SHA}`) {
+      return jsonResponse({}, { status: 404 });
+    }
+    if (u === `https://api.github.com/repos/${INTAKE_REPO}/git/ref/tags/v1.2.3`) {
+      return jsonResponse({ object: { type: "tag", sha: PROVIDED_SHA } });
+    }
+    if (u === `https://api.github.com/repos/${INTAKE_REPO}/commits/v1.2.3`) {
+      return jsonResponse({ message: "Unprocessable" }, { status: 422 });
+    }
+    return jsonResponse({}, { status: 404 });
+  };
+
+  const privateEval = await evaluateExternalPluginIssue({
+    issue: { body: buildIssueBody({ ref: "v1.2.3", sha: PROVIDED_SHA }) },
+  });
+  assert.equal(privateEval.valid, false);
+  assert.ok(privateEval.errors.some((e) => e.includes("must be public")));
+  assert.ok(privateEval.errors.some((e) => e.includes("was not found in GitHub repository")));
+  assert.ok(privateEval.errors.some((e) => e.includes("only commit-backed refs are supported")));
+  assert.ok(privateEval.warnings.some((w) => w.includes("is archived")));
+
+  // Rate-limited repository check (403 secondary rate limit) -> warning, not hard repo-not-found error
+  global.fetch = async () =>
+    new Response(JSON.stringify({ message: "You have exceeded a secondary rate limit." }), {
+      status: 403,
+      headers: { "content-type": "application/json", "retry-after": "60" },
+    });
+  const rateLimitedEval = await evaluateExternalPluginIssue({
+    issue: { body: buildIssueBody({ ref: "v1.2.3" }) },
+  });
+  assert.ok(rateLimitedEval.warnings.some((w) => w.includes("secondary rate limited")));
 });

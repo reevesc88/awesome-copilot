@@ -262,3 +262,63 @@ test("parseYamlFile parses JSON-compatible YAML and returns null on invalid YAML
   fs.writeFileSync(invalidYaml, "cookbooks: [unclosed\n", "utf8");
   assert.equal(parseYamlFile(invalidYaml), null);
 });
+
+test("extractMcpServers, extractMcpServerConfigs, and parseWorkflowMetadata ignore malformed non-object shapes", (t) => {
+  const dir = makeTempDir(t);
+
+  // Array mcp-servers must not produce index keys ("0", "1")
+  const arrayMcpAgent = path.join(dir, "array-mcp.agent.md");
+  fs.writeFileSync(
+    arrayMcpAgent,
+    "---\nname: array-mcp\ndescription: 'Array mcp-servers'\nmcp-servers:\n  - github\n  - fetch\n---\n",
+    "utf8",
+  );
+  assert.deepEqual(extractMcpServers(arrayMcpAgent), []);
+  assert.deepEqual(extractMcpServerConfigs(arrayMcpAgent), []);
+
+  // Null server entry and array headers normalize cleanly without leaking arrays as header objects
+  const weirdHeadersAgent = path.join(dir, "weird-headers.agent.md");
+  fs.writeFileSync(
+    weirdHeadersAgent,
+    [
+      "---",
+      "name: weird-headers",
+      "description: 'Edge-case server entries'",
+      "mcp-servers:",
+      "  empty-server: null",
+      "  array-headers:",
+      "    type: http",
+      "    url: https://mcp.example.com",
+      "    headers:",
+      "      - not-a-map",
+      "---",
+    ].join("\n"),
+    "utf8",
+  );
+  assert.deepEqual(extractMcpServerConfigs(weirdHeadersAgent), [
+    {
+      name: "empty-server",
+      type: undefined,
+      command: undefined,
+      args: undefined,
+      url: undefined,
+      headers: undefined,
+    },
+    {
+      name: "array-headers",
+      type: "http",
+      command: undefined,
+      args: undefined,
+      url: "https://mcp.example.com",
+      headers: undefined,
+    },
+  ]);
+
+  assert.equal(extractAgentMetadata(path.join(dir, "nonexistent.agent.md")), null);
+  assert.deepEqual(extractMcpServers(path.join(dir, "nonexistent.agent.md")), []);
+  assert.equal(parseWorkflowMetadata(path.join(dir, "missing-workflow.md")), null);
+
+  const incompleteWorkflow = path.join(dir, "incomplete-workflow.md");
+  fs.writeFileSync(incompleteWorkflow, "---\nname: Only Name\n---\n", "utf8");
+  assert.equal(parseWorkflowMetadata(incompleteWorkflow), null);
+});

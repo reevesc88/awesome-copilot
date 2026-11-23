@@ -109,8 +109,8 @@ if git diff HEAD -- requirements.txt &>/dev/null; then
     clean=$(printf '%s' "$line" | sed 's/^+//')
     [[ "$clean" =~ ^[[:space:]]*# ]] && continue
     [[ -z "$clean" ]] && continue
-    # Extract package name before ==, >=, <=, ~=, !=, etc.
-    pkg=$(printf '%s' "$clean" | sed 's/[[:space:]]*[><=!~].*//' | sed 's/[[:space:]]*//')
+    # Extract package name before ==, >=, <=, ~=, !=, [extras], ; markers, or # comments
+    pkg=$(printf '%s' "$clean" | sed 's/[[:space:]]*[><=!~;#\[].*//' | sed 's/[[:space:]]*//g')
     if [[ -n "$pkg" ]]; then
       NEW_DEPS+=("pip:$pkg")
     fi
@@ -131,8 +131,8 @@ fi
 # Go — go.mod
 if git diff HEAD -- go.mod &>/dev/null; then
   while IFS= read -r line; do
-    # Match added require entries like: +	github.com/foo/bar v1.2.3
-    pkg=$(printf '%s' "$line" | sed -n 's/^+[[:space:]]*\([a-zA-Z0-9._/-]*\.[a-zA-Z0-9._/-]*\)[[:space:]].*/\1/p')
+    # Match added require entries like: +	github.com/foo/bar v1.2.3 or +require github.com/foo/bar v1.2.3
+    pkg=$(printf '%s' "$line" | sed -n 's/^+[[:space:]]*\(require[[:space:]]\{1,\}\)\{0,1\}\([a-zA-Z0-9._/-]*\.[a-zA-Z0-9._/-]*\)[[:space:]].*/\2/p')
     if [[ -n "$pkg" && "$pkg" != "module" && "$pkg" != "go" && "$pkg" != "require" ]]; then
       NEW_DEPS+=("go:$pkg")
     fi
@@ -317,14 +317,16 @@ echo ""
 # Build JSON findings array
 FINDINGS_JSON="["
 FIRST=true
-for violation in "${VIOLATIONS[@]}"; do
-  IFS=$'\t' read -r pkg ecosystem license status <<< "$violation"
-  if [[ "$FIRST" != "true" ]]; then
-    FINDINGS_JSON+=","
-  fi
-  FIRST=false
-  FINDINGS_JSON+="{\"package\":\"$(json_escape "$pkg")\",\"ecosystem\":\"$(json_escape "$ecosystem")\",\"license\":\"$(json_escape "$license")\",\"status\":\"$(json_escape "$status")\"}"
-done
+if [[ ${#VIOLATIONS[@]} -gt 0 ]]; then
+  for violation in "${VIOLATIONS[@]}"; do
+    IFS=$'\t' read -r pkg ecosystem license status <<< "$violation"
+    if [[ "$FIRST" != "true" ]]; then
+      FINDINGS_JSON+=","
+    fi
+    FIRST=false
+    FINDINGS_JSON+="{\"package\":\"$(json_escape "$pkg")\",\"ecosystem\":\"$(json_escape "$ecosystem")\",\"license\":\"$(json_escape "$license")\",\"status\":\"$(json_escape "$status")\"}"
+  done
+fi
 FINDINGS_JSON+="]"
 
 # Write structured log entry
