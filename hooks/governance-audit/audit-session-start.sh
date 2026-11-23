@@ -16,7 +16,7 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 CWD=$(pwd)
 LEVEL="${GOVERNANCE_LEVEL:-standard}"
 
-jq -Rn \
+jq -Rcn \
   --arg timestamp "$TIMESTAMP" \
   --arg cwd "$CWD" \
   --arg level "$LEVEL" \

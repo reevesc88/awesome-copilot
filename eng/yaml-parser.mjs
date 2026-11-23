@@ -68,6 +68,12 @@ function extractAgentMetadata(filePath) {
     return null;
   }
 
+  const rawMcpServers = frontmatter["mcp-servers"];
+  const mcpServers =
+    rawMcpServers && typeof rawMcpServers === "object" && !Array.isArray(rawMcpServers)
+      ? rawMcpServers
+      : {};
+
   return {
     name: typeof frontmatter.name === "string" ? frontmatter.name : null,
     description:
@@ -75,7 +81,7 @@ function extractAgentMetadata(filePath) {
         ? frontmatter.description
         : null,
     tools: frontmatter.tools || [],
-    mcpServers: frontmatter["mcp-servers"] || {},
+    mcpServers,
   };
 }
 
@@ -103,8 +109,9 @@ function extractMcpServerConfigs(filePath) {
   const metadata = extractAgentMetadata(filePath);
   if (!metadata || !metadata.mcpServers) return [];
   return Object.entries(metadata.mcpServers).map(([name, cfg]) => {
-    // Ensure we don't mutate original cfg
-    const copy = { ...cfg };
+    // Ensure we don't mutate original cfg and ignore non-object entries
+    const copy =
+      cfg && typeof cfg === "object" && !Array.isArray(cfg) ? { ...cfg } : {};
     return {
       name,
       type: typeof copy.type === "string" ? copy.type : undefined,
@@ -112,7 +119,9 @@ function extractMcpServerConfigs(filePath) {
       args: Array.isArray(copy.args) ? copy.args : undefined,
       url: typeof copy.url === "string" ? copy.url : undefined,
       headers:
-        typeof copy.headers === "object" && copy.headers !== null
+        typeof copy.headers === "object" &&
+        copy.headers !== null &&
+        !Array.isArray(copy.headers)
           ? copy.headers
           : undefined,
     };

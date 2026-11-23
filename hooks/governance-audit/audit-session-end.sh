@@ -27,12 +27,12 @@ if [[ -f "$LOG_FILE" ]]; then
     TOTAL=$(awk -v start="$SESSION_START" -F'"timestamp":"' '{split($2,a,"\""); if(a[1]>=start) count++} END{print count+0}' "$LOG_FILE" 2>/dev/null || echo 0)
     THREATS=$(awk -v start="$SESSION_START" -F'"timestamp":"' '{split($2,a,"\""); if(a[1]>=start && /threat_detected/) count++} END{print count+0}' "$LOG_FILE" 2>/dev/null || echo 0)
   else
-    TOTAL=$(wc -l < "$LOG_FILE" 2>/dev/null || echo 0)
-    THREATS=$(grep -c '"threat_detected"' "$LOG_FILE" 2>/dev/null || echo 0)
+    TOTAL=$(awk 'END { print NR+0 }' "$LOG_FILE" 2>/dev/null || echo 0)
+    THREATS=$(awk '/"threat_detected"/ { count++ } END { print count+0 }' "$LOG_FILE" 2>/dev/null || echo 0)
   fi
 fi
 
-jq -Rn \
+jq -Rcn \
   --arg timestamp "$TIMESTAMP" \
   --argjson total "$TOTAL" \
   --argjson threats "$THREATS" \

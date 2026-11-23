@@ -38,16 +38,16 @@ TOOL_NAME=""
 TOOL_INPUT=""
 
 if command -v jq &>/dev/null; then
-  TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.toolName // empty' 2>/dev/null || echo "")
-  TOOL_INPUT=$(printf '%s' "$INPUT" | jq -r '.toolInput // empty' 2>/dev/null || echo "")
+  TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.toolName // .tool_name // empty' 2>/dev/null || echo "")
+  TOOL_INPUT=$(printf '%s' "$INPUT" | jq -r '(.toolInput // .tool_input // empty) | if type == "string" then . else tojson end' 2>/dev/null || echo "")
 fi
 
 # Fallback: extract with grep/sed if jq unavailable or fields empty
 if [[ -z "$TOOL_NAME" ]]; then
-  TOOL_NAME=$(printf '%s' "$INPUT" | grep -oE '"toolName"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"toolName"\s*:\s*"//;s/"//')
+  TOOL_NAME=$(printf '%s' "$INPUT" | grep -oE '"(toolName|tool_name)"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"[[:space:]]*:[[:space:]]*"//;s/"$//' || true)
 fi
 if [[ -z "$TOOL_INPUT" ]]; then
-  TOOL_INPUT=$(printf '%s' "$INPUT" | grep -oE '"toolInput"\s*:\s*"[^"]*"' | head -1 | sed 's/.*"toolInput"\s*:\s*"//;s/"//')
+  TOOL_INPUT=$(printf '%s' "$INPUT" | grep -oE '"(toolInput|tool_input)"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"[[:space:]]*:[[:space:]]*"//;s/"$//' || true)
 fi
 
 # Combine for pattern matching
@@ -125,7 +125,7 @@ PATTERNS=(
 # Escape a string for safe JSON embedding
 # ---------------------------------------------------------------------------
 json_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'
+  printf '%s' "$1" | tr '\r\n' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'
 }
 
 # ---------------------------------------------------------------------------

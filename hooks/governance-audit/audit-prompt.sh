@@ -83,7 +83,6 @@ if [[ ${#THREATS_FOUND[@]} -gt 0 ]]; then
   MAX_SEVERITY="0.0"
   for threat in "${THREATS_FOUND[@]}"; do
     IFS=$'\t' read -r category severity description evidence_encoded <<< "$threat"
-    local evidence
     evidence=$(printf '%s' "$evidence_encoded" | base64 -d 2>/dev/null || echo "[redacted]")
 
     if [[ "$FIRST" != "true" ]]; then
@@ -91,7 +90,7 @@ if [[ ${#THREATS_FOUND[@]} -gt 0 ]]; then
     fi
     FIRST=false
 
-    THREATS_JSON+=$(jq -Rn \
+    THREATS_JSON+=$(jq -Rcn \
       --arg cat "$category" \
       --arg sev "$severity" \
       --arg desc "$description" \
@@ -99,13 +98,13 @@ if [[ ${#THREATS_FOUND[@]} -gt 0 ]]; then
       '{"category":$cat,"severity":($sev|tonumber),"description":$desc,"evidence":$ev}')
 
     # Track max severity
-    if (( $(echo "$severity > $MAX_SEVERITY" | bc -l 2>/dev/null || echo 0) )); then
+    if awk -v a="$severity" -v b="$MAX_SEVERITY" 'BEGIN { exit !(a + 0 > b + 0) }'; then
       MAX_SEVERITY="$severity"
     fi
   done
   THREATS_JSON+="]"
 
-  jq -Rn \
+  jq -Rcn \
     --arg timestamp "$TIMESTAMP" \
     --arg level "$LEVEL" \
     --arg max_severity "$MAX_SEVERITY" \
@@ -126,7 +125,7 @@ if [[ ${#THREATS_FOUND[@]} -gt 0 ]]; then
     exit 1
   fi
 else
-  jq -Rn \
+  jq -Rcn \
     --arg timestamp "$TIMESTAMP" \
     --arg level "$LEVEL" \
     '{"timestamp":$timestamp,"event":"prompt_scanned","governance_level":$level,"status":"clean"}' \

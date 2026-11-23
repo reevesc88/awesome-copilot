@@ -54,7 +54,8 @@ const RESERVED_IDS = new Set(["day", "brain"]);
 export function validId(s) { return typeof s === "string" && ID_RE.test(s) && !RESERVED_IDS.has(s) && !(s in {}); }
 function text(s, max = 2000) { return typeof s === "string" ? s.slice(0, max) : ""; }
 function num(v) {
-    if (v === undefined || v === null || v === "") return undefined;
+    if (v === undefined || v === null || typeof v === "boolean" || typeof v === "object") return undefined;
+    if (typeof v === "string" && v.trim() === "") return undefined;
     const n = Number(v);
     return Number.isFinite(n) ? n : undefined;
 }
