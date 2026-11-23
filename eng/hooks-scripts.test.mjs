@@ -223,6 +223,43 @@ test("tool-guardian handles empty/object inputs, allowlists, warn vs block modes
   });
   assert.equal(fallbackObjectClean.status, 0, fallbackObjectClean.stderr);
 
+  // JSON Unicode-escaped commands without jq must still decode and block
+  const fallbackUnicodeBlocked = runScript(path.join(noJqBin, "bash"), [script], {
+    cwd,
+    env: { PATH: noJqBin, TOOL_GUARD_LOG_DIR: logDir, GUARD_MODE: "block" },
+    input: '{"tool_name":"bash","tool_input":{"command":"git\\u0020push --force origin main"}}',
+  });
+  assert.equal(fallbackUnicodeBlocked.status, 1, fallbackUnicodeBlocked.stderr);
+  assert.match(fallbackUnicodeBlocked.stdout, /Operation blocked/);
+  assert.match(fallbackUnicodeBlocked.stdout, /git push --force origin main/);
+
+  // Large (35 KB) escaped-quote payload without jq must finish well under the 10s hook timeout
+  const largeSafeStart = Date.now();
+  const fallbackLargeEscapedClean = runScript("/bin/bash", [script], {
+    cwd,
+    env: { PATH: noJqBin, TOOL_GUARD_LOG_DIR: logDir, GUARD_MODE: "block" },
+    input: JSON.stringify({
+      toolName: "bash",
+      toolInput: `echo "hello"; # ${"x".repeat(35_000)}`,
+    }),
+  });
+  const largeSafeElapsedMs = Date.now() - largeSafeStart;
+  assert.equal(fallbackLargeEscapedClean.status, 0, fallbackLargeEscapedClean.stderr);
+  assert.ok(
+    largeSafeElapsedMs < 3000,
+    `expected large escaped fallback to finish under 3000ms, took ${largeSafeElapsedMs}ms`,
+  );
+
+  const fallbackLargeEscapedBlocked = runScript("/bin/bash", [script], {
+    cwd,
+    env: { PATH: noJqBin, TOOL_GUARD_LOG_DIR: logDir, GUARD_MODE: "block" },
+    input: JSON.stringify({
+      toolName: "bash",
+      toolInput: `echo "hello"; # ${"x".repeat(35_000)}\ngit push --force origin main`,
+    }),
+  });
+  assert.equal(fallbackLargeEscapedBlocked.status, 1, fallbackLargeEscapedBlocked.stderr);
+
   const lines = fs
     .readFileSync(path.join(logDir, "guard.log"), "utf8")
     .trim()

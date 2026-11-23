@@ -34,97 +34,56 @@ LOG_FILE="$LOG_DIR/guard.log"
 # ---------------------------------------------------------------------------
 # Extract tool name and input text
 # ---------------------------------------------------------------------------
-extract_tool_input_fallback() {
-  local flat="$1"
-  local key_re='"(toolInput|tool_input)"[[:space:]]*:[[:space:]]*'
-  local null_re='^null([]}[:space:],]|$)'
-  local rem="$flat"
-  local combined_vals=""
-  local val="" start_ch="" after_open="" candidate="" ch=""
-  local depth=0 in_str=false esc=false i=0 len=0
+decode_unicode_ascii() {
+  local s="$1" soh="$2" stx="$3" tab=$'\t'
+  printf '%s\n' "$s" | sed \
+    -e "s/\\\\u0009/${tab}/g" \
+    -e "s/\\\\u0022/${stx}/g" \
+    -e "s/\\\\u0027/'/g" \
+    -e "s/\\\\u005[cC]/${soh}/g" \
+    -e 's/\\u000[aAdD]/ /g; s/\\u0020/ /g; s/\\u0021/!/g; s/\\u0023/#/g; s/\\u0024/$/g; s/\\u0025/%/g; s/\\u0026/\&/g; s/\\u0028/(/g; s/\\u0029/)/g; s/\\u002[aA]/*/g; s/\\u002[bB]/+/g; s/\\u002[cC]/,/g; s/\\u002[dD]/-/g; s/\\u002[eE]/./g; s/\\u002[fF]/\//g' \
+    -e 's/\\u0030/0/g; s/\\u0031/1/g; s/\\u0032/2/g; s/\\u0033/3/g; s/\\u0034/4/g; s/\\u0035/5/g; s/\\u0036/6/g; s/\\u0037/7/g; s/\\u0038/8/g; s/\\u0039/9/g; s/\\u003[aA]/:/g; s/\\u003[bB]/;/g; s/\\u003[cC]/</g; s/\\u003[dD]/=/g; s/\\u003[eE]/>/g; s/\\u003[fF]/?/g' \
+    -e 's/\\u0040/@/g; s/\\u0041/A/g; s/\\u0042/B/g; s/\\u0043/C/g; s/\\u0044/D/g; s/\\u0045/E/g; s/\\u0046/F/g; s/\\u0047/G/g; s/\\u0048/H/g; s/\\u0049/I/g; s/\\u004[aA]/J/g; s/\\u004[bB]/K/g; s/\\u004[cC]/L/g; s/\\u004[dD]/M/g; s/\\u004[eE]/N/g; s/\\u004[fF]/O/g' \
+    -e 's/\\u0050/P/g; s/\\u0051/Q/g; s/\\u0052/R/g; s/\\u0053/S/g; s/\\u0054/T/g; s/\\u0055/U/g; s/\\u0056/V/g; s/\\u0057/W/g; s/\\u0058/X/g; s/\\u0059/Y/g; s/\\u005[aA]/Z/g; s/\\u005[bB]/[/g; s/\\u005[dD]/]/g; s/\\u005[eE]/^/g; s/\\u005[fF]/_/g' \
+    -e 's/\\u0060/`/g; s/\\u0061/a/g; s/\\u0062/b/g; s/\\u0063/c/g; s/\\u0064/d/g; s/\\u0065/e/g; s/\\u0066/f/g; s/\\u0067/g/g; s/\\u0068/h/g; s/\\u0069/i/g; s/\\u006[aA]/j/g; s/\\u006[bB]/k/g; s/\\u006[cC]/l/g; s/\\u006[dD]/m/g; s/\\u006[eE]/n/g; s/\\u006[fF]/o/g' \
+    -e 's/\\u0070/p/g; s/\\u0071/q/g; s/\\u0072/r/g; s/\\u0073/s/g; s/\\u0074/t/g; s/\\u0075/u/g; s/\\u0076/v/g; s/\\u0077/w/g; s/\\u0078/x/g; s/\\u0079/y/g; s/\\u007[aA]/z/g; s/\\u007[bB]/{/g; s/\\u007[cC]/|/g; s/\\u007[dD]/}/g; s/\\u007[eE]/~/g'
+}
 
-  while [[ "$rem" =~ $key_re ]]; do
-    rem="${rem#*"${BASH_REMATCH[0]}"}"
-    [[ -z "$rem" ]] && break
-    start_ch="${rem:0:1}"
+extract_fallback_fields() {
+  local soh=$'\001' stx=$'\002' etx=$'\003' tab=$'\t'
+  local flat esc after_key start_ch rest_after_str
 
-    if [[ "$start_ch" == '"' ]]; then
-      after_open="${rem:1}"
-      if [[ "$after_open" == *'"'* ]]; then
-        candidate="${after_open%%\"*}"
-        if [[ "$candidate" != *'\'* ]]; then
-          val="$candidate"
-          rem="${after_open:${#candidate}+1}"
-        else
-          esc=false
-          len=${#after_open}
-          val="$after_open"
-          rem=""
-          for ((i = 0; i < len; i++)); do
-            ch="${after_open:i:1}"
-            if [[ "$esc" == "true" ]]; then
-              esc=false
-            elif [[ "$ch" == '\' ]]; then
-              esc=true
-            elif [[ "$ch" == '"' ]]; then
-              val="${after_open:0:i}"
-              rem="${after_open:i+1}"
-              break
-            fi
-          done
-        fi
-      else
-        val="$after_open"
-        rem=""
-      fi
-      val=$(printf '%s' "$val" | sed 's/\\"/"/g; s/\\\//\//g; s/\\\\/\\/g')
-      combined_vals+="${combined_vals:+ }${val}"
-    elif [[ "$start_ch" == '{' || "$start_ch" == '[' ]]; then
-      depth=0
-      in_str=false
-      esc=false
-      len=${#rem}
-      val="$rem"
-      for ((i = 0; i < len; i++)); do
-        ch="${rem:i:1}"
-        if [[ "$in_str" == "true" ]]; then
-          if [[ "$esc" == "true" ]]; then
-            esc=false
-          elif [[ "$ch" == '\' ]]; then
-            esc=true
-          elif [[ "$ch" == '"' ]]; then
-            in_str=false
-          fi
-        else
-          if [[ "$ch" == '"' ]]; then
-            in_str=true
-          elif [[ "$ch" == '{' || "$ch" == '[' ]]; then
-            depth=$((depth + 1))
-          elif [[ "$ch" == '}' || "$ch" == ']' ]]; then
-            depth=$((depth - 1))
-            if [[ $depth -eq 0 ]]; then
-              val="${rem:0:i+1}"
-              rem="${rem:i+1}"
-              break
-            fi
-          fi
-        fi
-      done
-      if [[ $depth -ne 0 ]]; then
-        rem=""
-      fi
-      val=$(printf '%s' "$val" | sed 's/\\"/"/g; s/\\\//\//g; s/\\\\/\\/g')
-      combined_vals+="${combined_vals:+ }${val}"
-    elif [[ "$rem" =~ $null_re ]]; then
-      rem="${rem:4}"
+  flat=$(printf '%s' "$INPUT" | tr '\r\n\001\002\003' '     ')
+  esc=$(printf '%s\n' "$flat" | sed "s/\\\\\\\\/${soh}/g; s/\\\\\"/${stx}/g")
+  if [[ "$esc" == *'\u00'* ]]; then
+    esc=$(decode_unicode_ascii "$esc" "$soh" "$stx")
+  fi
+
+  TOOL_NAME=$(printf '%s\n' "$esc" | grep -oE '"(toolName|tool_name)"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/^"(toolName|tool_name)"[[:space:]]*:[[:space:]]*"//; s/"$//' || true)
+  TOOL_NAME=$(printf '%s\n' "$TOOL_NAME" | sed -e "s/${stx}/\"/g" -e 's/\\\//\//g' -e "s/\\\\t/${tab}/g" -e 's/\\[rn]/ /g' -e "s/${soh}/\\\\/g")
+
+  after_key=$(printf '%s\n' "$esc" | sed -E "s/\"(toolInput|tool_input)\"[[:space:]]*:[[:space:]]*/${etx}/" | tr '\003' '\n' | sed -n '2p')
+  if [[ -z "$after_key" ]]; then
+    TOOL_INPUT=""
+    return
+  fi
+
+  start_ch="${after_key:0:1}"
+  if [[ "$start_ch" == '"' ]]; then
+    rest_after_str=$(printf '%s\n' "$after_key" | sed -E 's/^"[^"]*"//')
+    if printf '%s\n' "$rest_after_str" | grep -qE '"(toolInput|tool_input)"[[:space:]]*:'; then
+      TOOL_INPUT=$(printf '%s\n' "$after_key" | sed -E 's/[[:space:]]*\}[[:space:]]*$//')
     else
-      val="${rem%%[]},[:space:]]*}"
-      rem="${rem:${#val}}"
-      combined_vals+="${combined_vals:+ }${val}"
+      TOOL_INPUT=$(printf '%s\n' "$after_key" | sed -E 's/^"([^"]*)".*/\1/; s/^"//')
     fi
-  done
+  elif printf '%s\n' "$after_key" | grep -qE '^null([]}[:space:],]|$)' && ! printf '%s\n' "$after_key" | grep -qE '"(toolInput|tool_input)"[[:space:]]*:'; then
+    TOOL_INPUT=""
+    return
+  else
+    TOOL_INPUT=$(printf '%s\n' "$after_key" | sed -E 's/[[:space:]]*\}[[:space:]]*$//')
+  fi
 
-  printf '%s' "$combined_vals"
+  TOOL_INPUT=$(printf '%s\n' "$TOOL_INPUT" | sed -e "s/${stx}/\"/g" -e 's/\\\//\//g' -e "s/\\\\t/${tab}/g" -e 's/\\[rn]/ /g' -e "s/${soh}/\\\\/g")
 }
 
 TOOL_NAME=""
@@ -137,11 +96,9 @@ if command -v jq &>/dev/null && printf '%s' "$INPUT" | jq -e 'type == "object"' 
   TOOL_INPUT=$(printf '%s' "$INPUT" | jq -r 'if (.toolInput != null) then (.toolInput | if type == "string" then . else tojson end) elif (.tool_input != null) then (.tool_input | if type == "string" then . else tojson end) else empty end' 2>/dev/null || echo "")
 fi
 
-# Fallback: extract without jq when jq is unavailable or stdin is not a JSON object
+# Fallback: stream-extract without jq when jq is unavailable or stdin is not a JSON object
 if [[ "$PARSED_WITH_JQ" != "true" ]]; then
-  FLAT_INPUT=$(printf '%s' "$INPUT" | tr '\r\n' '  ')
-  TOOL_NAME=$(printf '%s\n' "$FLAT_INPUT" | grep -oE '"(toolName|tool_name)"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' | head -1 | sed -E 's/^"(toolName|tool_name)"[[:space:]]*:[[:space:]]*"//;s/"$//' || true)
-  TOOL_INPUT=$(extract_tool_input_fallback "$FLAT_INPUT")
+  extract_fallback_fields
 fi
 
 # Combine for pattern matching
