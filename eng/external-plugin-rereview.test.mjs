@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -150,4 +151,22 @@ test("removePluginFromExternalJson removes matched plugin and throws when unmatc
     remaining.map((p) => p.name),
     ["beta-pack"],
   );
+
+  // Repo-only removal and CLI usage/remove execution
+  const cliPath = new URL("./external-plugin-rereview.mjs", import.meta.url).pathname;
+  assert.equal(spawnSync(process.execPath, [cliPath], { encoding: "utf8", timeout: 10_000 }).status, 1);
+  assert.equal(spawnSync(process.execPath, [cliPath, "remove"], { encoding: "utf8", timeout: 10_000 }).status, 1);
+
+  const cliRemove = spawnSync(
+    process.execPath,
+    [cliPath, "remove", "--source-repo", "org/beta", "--file", filePath],
+    { encoding: "utf8", timeout: 10_000 },
+  );
+  assert.equal(cliRemove.status, 0, cliRemove.stderr);
+  assert.equal(JSON.parse(cliRemove.stdout).name, "beta-pack");
+  assert.deepEqual(JSON.parse(fs.readFileSync(filePath, "utf8")), []);
+
+  // Invalid external.json surfaces validation errors
+  fs.writeFileSync(filePath, "{corrupt", "utf8");
+  assert.throws(() => removePluginFromExternalJson({ pluginName: "x", filePath }), /Error reading/);
 });

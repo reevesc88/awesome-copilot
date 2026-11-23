@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -142,4 +143,87 @@ test("generateMarketplace merges and sorts local and external plugins", (t) => {
   );
   assert.equal(generated.plugins[1].source, "plugins/zeta-local");
   assert.equal(generated.plugins[1].version, "2.1.0");
+});
+
+test("materializePlugins copies hooks and implicit extensions, warns on missing/unknown refs, and rejects invalid extension entries", (t) => {
+  const rootFolder = makeTempDir(t);
+  fs.mkdirSync(path.join(rootFolder, "hooks", "audit-hook"), { recursive: true });
+  fs.writeFileSync(path.join(rootFolder, "hooks", "audit-hook", "hooks.json"), "{}\n", "utf8");
+  fs.mkdirSync(path.join(rootFolder, "extensions", "implicit-pack"), { recursive: true });
+  fs.writeFileSync(
+    path.join(rootFolder, "extensions", "implicit-pack", "extension.mjs"),
+    "export default {};\n",
+    "utf8",
+  );
+
+  // Plugin folder without plugin.json should be skipped silently
+  fs.mkdirSync(path.join(rootFolder, "plugins", "empty-folder"), { recursive: true });
+
+  const pluginPath = path.join(rootFolder, "plugins", "implicit-pack");
+  fs.mkdirSync(pluginPath, { recursive: true });
+  fs.writeFileSync(
+    path.join(pluginPath, "plugin.json"),
+    JSON.stringify({
+      name: "implicit-pack",
+      version: "1.0.0",
+      description: "Implicit extension + hook + warning paths",
+      license: "MIT",
+      extensions: {
+        "com.github.awesome-copilot": {
+          hooks: ["./hooks/audit-hook/", "./unknown/format", "./hooks/missing-hook/"],
+          extensions: ["./extensions/missing-ext"],
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  materializePlugins({ rootFolder });
+
+  assert.equal(
+    fs.existsSync(path.join(pluginPath, "com.github.copilot", "hooks", "audit-hook", "hooks.json")),
+    true,
+  );
+  assert.equal(
+    fs.existsSync(path.join(pluginPath, "com.github.copilot", "extensions", "implicit-pack", "extension.mjs")),
+    true,
+  );
+
+  // Non-relative extension reference throws synchronously
+  const badPluginDir = path.join(rootFolder, "plugins", "bad-ext-ref");
+  fs.mkdirSync(badPluginDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(badPluginDir, "plugin.json"),
+    JSON.stringify({
+      name: "bad-ext-ref",
+      version: "1.0.0",
+      description: "Invalid extension ref",
+      extensions: {
+        "com.github.awesome-copilot": {
+          extensions: ["not-relative"],
+        },
+      },
+    }),
+    "utf8",
+  );
+  assert.throws(() => materializePlugins({ rootFolder }), /must contain plugin-relative paths/);
+
+  // Malformed plugin.json increments error count and exits non-zero in isolated process
+  fs.rmSync(badPluginDir, { recursive: true, force: true });
+  const corruptDir = path.join(rootFolder, "plugins", "corrupt-json");
+  fs.mkdirSync(corruptDir, { recursive: true });
+  fs.writeFileSync(path.join(corruptDir, "plugin.json"), "{corrupt", "utf8");
+
+  const moduleUrl = new URL("./materialize-plugins.mjs", import.meta.url).href;
+  const sub = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import { materializePlugins } from ${JSON.stringify(moduleUrl)}; materializePlugins({ rootFolder: ${JSON.stringify(rootFolder)} });`,
+    ],
+    { encoding: "utf8", timeout: 10_000 },
+  );
+  assert.equal(sub.status, 1);
+  assert.match(sub.stderr, /1 error\(s\)/);
 });

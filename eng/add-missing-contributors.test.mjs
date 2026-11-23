@@ -125,3 +125,47 @@ test("addContributor, processContributor, and main handle success, 404 ignore-li
   printSummaryReport({ processed: 0, added: 0, failed: 0 });
   printSummaryReport(summary);
 });
+
+test("contributor error handlers cover fetch failures, network/timeout propagation, zero-missing main, and summary branches", async () => {
+  // fetchMergedPrs throwing returns [] and falls back to 'code'
+  assert.deepEqual(
+    getContributorFiles("broken", {
+      fetchMergedPrs: () => {
+        throw new Error("gh cli failed");
+      },
+    }),
+    [],
+  );
+  assert.equal(
+    analyzeContributor("broken", {
+      fetchMergedPrs: () => {
+        throw new Error("gh cli failed");
+      },
+    }),
+    "code",
+  );
+
+  // Network/timeout errors propagate from addContributor through main
+  await assert.rejects(
+    () =>
+      main({
+        getMissing: () => ["net-user"],
+        fetchMergedPrs: () => [],
+        execCommand: () => {
+          throw new Error("network timeout connecting to api.github.com");
+        },
+      }),
+    /network timeout/,
+  );
+
+  // Zero missing contributors returns early cleanly
+  assert.deepEqual(await main({ getMissing: () => [] }), {
+    processed: 0,
+    added: 0,
+    failed: 0,
+  });
+
+  // Exercise all-succeeded and all-failed printSummaryReport branches
+  printSummaryReport({ processed: 2, added: 2, failed: 0 });
+  printSummaryReport({ processed: 2, added: 0, failed: 2 });
+});

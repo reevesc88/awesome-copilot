@@ -13,6 +13,7 @@ import {
   parseCliArgs,
   resolveFetchSpec,
   runCanvasStructureGate,
+  runExternalPluginQualityGates,
   runRefShaConsistencyGate,
   runVersionMatchGate,
   truncateOutput,
@@ -502,4 +503,123 @@ test("version, ref/sha, and canvas gates cover not_run, mismatch, invalid JSON, 
   );
   assert.equal(invalidManifest.status, "fail");
   assert.match(invalidManifest.output, /Invalid JSON/);
+});
+
+test("runExternalPluginQualityGates orchestrates offline local clone, vally lint, smoke gate, missing path, and CLI checks", async () => {
+  const hostRoot = fs.mkdtempSync(path.join(os.tmpdir(), "external-plugin-quality-e2e-"));
+  tempDirs.push(hostRoot);
+
+  // Create a local remote repo at <hostRoot>/owner/e2e-plugin.git and map https://github.com/owner/ -> file://<hostRoot>/owner/
+  const remoteRepo = path.join(hostRoot, "owner", "e2e-plugin.git");
+  fs.mkdirSync(remoteRepo, { recursive: true });
+  runGit(remoteRepo, "init", "-q");
+  runGit(remoteRepo, "config", "user.name", "Copilot Test");
+  runGit(remoteRepo, "config", "user.email", "copilot@example.com");
+  runGit(remoteRepo, "config", "uploadpack.allowAnySHA1InWant", "true");
+
+  fs.mkdirSync(path.join(remoteRepo, "skills", "demo-skill"), { recursive: true });
+  fs.writeFileSync(
+    path.join(remoteRepo, "skills", "demo-skill", "SKILL.md"),
+    "---\nname: demo-skill\ndescription: 'Valid offline skill for quality gate testing'\n---\n# Demo Skill\n\nInstructions.\n",
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(remoteRepo, "plugin.json"),
+    JSON.stringify(
+      {
+        $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+        name: "e2e-plugin",
+        version: "1.0.0",
+        description: "Offline quality gate plugin",
+        skills: ["./skills/demo-skill"],
+      },
+      null,
+      2,
+    ) + "\n",
+    "utf8",
+  );
+  const sha = commitAll(remoteRepo, "Initial valid plugin");
+  runGit(remoteRepo, "tag", "-a", "v1.0.0", "-m", "v1.0.0");
+
+  // Stub copilot CLI on PATH to exercise runInstallSmokeGate end-to-end
+  const fakeBin = path.join(hostRoot, "bin");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  const copilotPath = path.join(fakeBin, "copilot");
+  fs.writeFileSync(
+    copilotPath,
+    [
+      "#!/bin/sh",
+      'if [ "$1" = "plugin" ] && [ "$2" = "marketplace" ] && [ "$3" = "add" ]; then exit 0; fi',
+      'if [ "$1" = "plugin" ] && [ "$2" = "install" ]; then',
+      '  dest="$HOME/.copilot/installed-plugins/external-plugin-intake/e2e-plugin"',
+      '  mkdir -p "$dest"',
+      '  printf \'{"name":"e2e-plugin","version":"1.0.0"}\\n\' > "$dest/plugin.json"',
+      "  exit 0",
+      "fi",
+      "exit 1",
+    ].join("\n") + "\n",
+    { mode: 0o755 },
+  );
+
+  const savedEnv = {
+    PATH: process.env.PATH,
+    GIT_CONFIG_COUNT: process.env.GIT_CONFIG_COUNT,
+    GIT_CONFIG_KEY_0: process.env.GIT_CONFIG_KEY_0,
+    GIT_CONFIG_VALUE_0: process.env.GIT_CONFIG_VALUE_0,
+    GIT_CONFIG_KEY_1: process.env.GIT_CONFIG_KEY_1,
+    GIT_CONFIG_VALUE_1: process.env.GIT_CONFIG_VALUE_1,
+  };
+
+  try {
+    process.env.PATH = `${fakeBin}:${savedEnv.PATH}`;
+    process.env.GIT_CONFIG_COUNT = "2";
+    process.env.GIT_CONFIG_KEY_0 = `url.file://${path.join(hostRoot, "owner")}/.insteadOf`;
+    process.env.GIT_CONFIG_VALUE_0 = "https://github.com/owner/";
+    process.env.GIT_CONFIG_KEY_1 = "protocol.file.allow";
+    process.env.GIT_CONFIG_VALUE_1 = "always";
+
+    const passRes = await runExternalPluginQualityGates({
+      name: "e2e-plugin",
+      version: "1.0.0",
+      source: { source: "github", repo: "owner/e2e-plugin", ref: "v1.0.0", sha },
+    });
+    assert.equal(passRes.overall_status, "pass", passRes.summary);
+    assert.equal(passRes.failure_class, "none");
+    assert.equal(passRes.smoke_status, "pass");
+    assert.equal(passRes.vally_lint_status, "pass");
+
+    // Missing source.path inside cloned repo -> submitter_fixes fail
+    const missingSubdir = await runExternalPluginQualityGates({
+      name: "e2e-plugin",
+      version: "1.0.0",
+      keywords: ["canvas"],
+      source: { source: "github", repo: "owner/e2e-plugin", path: "nonexistent/dir", sha },
+    });
+    assert.equal(missingSubdir.overall_status, "fail");
+    assert.equal(missingSubdir.failure_class, "submitter_fixes");
+    assert.equal(missingSubdir.canvas_structure_status, "fail");
+
+    // Unfetchable locator triggers catch -> infra_error
+    const infraRes = await runExternalPluginQualityGates({
+      name: "e2e-plugin",
+      version: "1.0.0",
+      source: { source: "github", repo: "owner/e2e-plugin", ref: "v99.99.99-missing" },
+    });
+    assert.equal(infraRes.overall_status, "infra_error");
+    assert.equal(infraRes.failure_class, "infra");
+  } finally {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+  }
+
+  // CLI usage check when --plugin-json is omitted
+  const cliRun = spawnSync(
+    process.execPath,
+    [new URL("./external-plugin-quality-gates.mjs", import.meta.url).pathname],
+    { encoding: "utf8", timeout: SUBPROCESS_TIMEOUT_MS },
+  );
+  assert.equal(cliRun.status, 1);
+  assert.match(cliRun.stderr, /Usage:/);
 });
