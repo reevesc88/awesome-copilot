@@ -226,26 +226,33 @@ test("zip reader indexes stored/deflated entries, streams with CRC+size verifica
   await assert.rejects(() => streamZipEntry(bombZip, bombIdx.entries[0], new PassThrough()), /decompressed past declared size/);
 });
 
-test("ExpiringPromiseCache enforces constructor bounds, deduplicates concurrent loads, handles failures, and evicts LRU non-pending entries", async () => {
+test("ExpiringPromiseCache enforces constructor bounds, deduplicates concurrent loads, handles failures, and evicts LRU non-pending entries", async (t) => {
+  let now = 1_000_000;
+  t.mock.method(Date, "now", () => now);
+
   assert.throws(() => new ExpiringPromiseCache({ maxEntries: 0, ttlMs: 1000 }), TypeError);
   assert.throws(() => new ExpiringPromiseCache({ maxEntries: 2, ttlMs: 0 }), TypeError);
 
-  const cache = new ExpiringPromiseCache({ maxEntries: 2, ttlMs: 50 });
+  const cache = new ExpiringPromiseCache({ maxEntries: 2, ttlMs: 1_000 });
   await assert.rejects(() => cache.get("k", null), TypeError);
 
   // Deduplicates concurrent callers on cache miss
   let calls = 0;
-  const [v1, v2] = await Promise.all([
-    cache.get("alpha", async () => {
-      calls += 1;
-      await new Promise((r) => setTimeout(r, 10));
-      return "value-1";
-    }),
-    cache.get("alpha", async () => {
-      calls += 1;
-      return "value-2";
-    }),
-  ]);
+  let releaseAlpha;
+  const alphaGate = new Promise((resolve) => {
+    releaseAlpha = resolve;
+  });
+  const firstLoad = cache.get("alpha", async () => {
+    calls += 1;
+    await alphaGate;
+    return "value-1";
+  });
+  const secondLoad = cache.get("alpha", async () => {
+    calls += 1;
+    return "value-2";
+  });
+  releaseAlpha();
+  const [v1, v2] = await Promise.all([firstLoad, secondLoad]);
   assert.equal(calls, 1);
   assert.equal(v1, "value-1");
   assert.equal(v2, "value-1");
@@ -274,13 +281,17 @@ test("ExpiringPromiseCache enforces constructor bounds, deduplicates concurrent 
   assert.equal(cache.peek("gamma"), "G");
 
   // TTL expiration + delete + clear
-  const shortCache = new ExpiringPromiseCache({ maxEntries: 3, ttlMs: 15 });
+  const shortCache = new ExpiringPromiseCache({ maxEntries: 3, ttlMs: 50 });
   shortCache.set("ephemeral", 42);
-  await new Promise((r) => setTimeout(r, 30));
+  now += 49;
+  assert.equal(shortCache.peek("ephemeral"), 42);
+  now += 1;
   assert.equal(shortCache.peek("ephemeral"), undefined);
 
+  assert.equal(cache.peek("alpha"), "value-1");
   cache.delete("alpha");
   assert.equal(cache.peek("alpha"), undefined);
+  assert.equal(cache.peek("gamma"), "G");
   cache.clear();
   assert.equal(cache.peek("gamma"), undefined);
 });
