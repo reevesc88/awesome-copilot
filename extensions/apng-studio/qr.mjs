@@ -430,6 +430,9 @@ export function encodeQr(text, opts = {}) {
             }
         }
     } else {
+        if (!Number.isInteger(chosen) || chosen < 0 || chosen >= MASKS.length) {
+            throw new RangeError("forceMask must be an integer 0-7");
+        }
         bestMatrix = applyMask(base, reserved, MASKS[chosen]);
         placeFormatBits(bestMatrix, chosen);
     }

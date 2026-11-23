@@ -81,6 +81,15 @@ def validate_tour(tour_path: str, repo_root: str = ".") -> dict:
         }
 
     # ── 2. Required top-level fields ────────────────────────────────────────
+    if not isinstance(tour, dict):
+        return {
+            "passed": False,
+            "errors": ["Tour root must be a JSON object"],
+            "warnings": [],
+            "info": [],
+            "stats": {},
+        }
+
     if "title" not in tour:
         errors.append("Missing required field: 'title'")
     if "steps" not in tour:
@@ -106,7 +115,7 @@ def validate_tour(tour_path: str, repo_root: str = ".") -> dict:
                 continue
             try:
                 other = json.loads(tf.read_text())
-                if other.get("title") == next_title:
+                if isinstance(other, dict) and other.get("title") == next_title:
                     found_next = True
                     break
             except Exception:
@@ -124,11 +133,14 @@ def validate_tour(tour_path: str, repo_root: str = ".") -> dict:
 
     for i, step in enumerate(steps):
         label = f"Step {i + 1}"
+        if not isinstance(step, dict):
+            errors.append(f"{label}: Step must be a JSON object")
+            continue
         if "title" in step:
             label += f" — {step['title']!r}"
 
         # description required on every step
-        if "description" not in step:
+        if "description" not in step or not isinstance(step["description"], str):
             errors.append(f"{label}: Missing required field 'description'")
 
         has_file = "file" in step
@@ -143,15 +155,20 @@ def validate_tour(tour_path: str, repo_root: str = ".") -> dict:
         if has_file:
             file_step_count += 1
             raw_path = step["file"]
+            if not isinstance(raw_path, str):
+                errors.append(f"{label}: 'file' must be a string, got {raw_path!r}")
+                raw_path = None
 
             # must be relative — no leading slash, no ./
-            if raw_path.startswith("/"):
+            if raw_path is not None and raw_path.startswith("/"):
                 errors.append(f"{label}: File path must be relative (no leading /): {raw_path!r}")
-            elif raw_path.startswith("./"):
+            elif raw_path is not None and raw_path.startswith("./"):
                 warnings.append(f"{label}: File path should not start with './': {raw_path!r}")
 
-            file_path = repo / raw_path
-            if not file_path.exists():
+            file_path = (repo / raw_path) if raw_path is not None else None
+            if file_path is None:
+                pass
+            elif not file_path.exists():
                 errors.append(f"{label}: File does not exist: {raw_path!r}")
             elif not file_path.is_file():
                 errors.append(f"{label}: Path is not a file: {raw_path!r}")
@@ -161,7 +178,7 @@ def validate_tour(tour_path: str, repo_root: str = ".") -> dict:
                 # line number
                 if "line" in step:
                     ln = step["line"]
-                    if not isinstance(ln, int):
+                    if isinstance(ln, bool) or not isinstance(ln, int):
                         errors.append(f"{label}: 'line' must be an integer, got {ln!r}")
                     elif ln < 1:
                         errors.append(f"{label}: Line number must be >= 1, got {ln}")
@@ -173,50 +190,72 @@ def validate_tour(tour_path: str, repo_root: str = ".") -> dict:
                 # selection
                 if has_selection:
                     sel = step["selection"]
-                    start = sel.get("start", {})
-                    end = sel.get("end", {})
-                    s_line = start.get("line", 0)
-                    e_line = end.get("line", 0)
-                    if s_line > lc:
-                        errors.append(
-                            f"{label}: Selection start line {s_line} exceeds file length ({lc})"
-                        )
-                    if e_line > lc:
-                        errors.append(
-                            f"{label}: Selection end line {e_line} exceeds file length ({lc})"
-                        )
-                    if s_line > e_line:
-                        errors.append(
-                            f"{label}: Selection start ({s_line}) is after end ({e_line})"
-                        )
+                    if not isinstance(sel, dict):
+                        errors.append(f"{label}: 'selection' must be an object")
+                    else:
+                        start = sel.get("start")
+                        end = sel.get("end")
+                        if not isinstance(start, dict) or not isinstance(end, dict):
+                            errors.append(f"{label}: 'selection.start' and 'selection.end' must be objects")
+                        else:
+                            s_line = start.get("line", 0)
+                            e_line = end.get("line", 0)
+                            if (
+                                isinstance(s_line, bool)
+                                or not isinstance(s_line, int)
+                                or isinstance(e_line, bool)
+                                or not isinstance(e_line, int)
+                            ):
+                                errors.append(f"{label}: Selection start/end lines must be integers")
+                            else:
+                                if s_line > lc:
+                                    errors.append(
+                                        f"{label}: Selection start line {s_line} exceeds file length ({lc})"
+                                    )
+                                if e_line > lc:
+                                    errors.append(
+                                        f"{label}: Selection end line {e_line} exceeds file length ({lc})"
+                                    )
+                                if s_line > e_line:
+                                    errors.append(
+                                        f"{label}: Selection start ({s_line}) is after end ({e_line})"
+                                    )
 
                 # pattern
                 if "pattern" in step:
-                    try:
-                        compiled = re.compile(step["pattern"], re.MULTILINE)
-                        content = _file_content(file_path)
-                        if not compiled.search(content):
-                            errors.append(
-                                f"{label}: Pattern {step['pattern']!r} matches nothing in {raw_path!r}"
-                            )
-                    except re.error as e:
-                        errors.append(f"{label}: Invalid regex pattern: {e}")
+                    if not isinstance(step["pattern"], str):
+                        errors.append(f"{label}: 'pattern' must be a string, got {step['pattern']!r}")
+                    else:
+                        try:
+                            compiled = re.compile(step["pattern"], re.MULTILINE)
+                            content = _file_content(file_path)
+                            if not compiled.search(content):
+                                errors.append(
+                                    f"{label}: Pattern {step['pattern']!r} matches nothing in {raw_path!r}"
+                                )
+                        except re.error as e:
+                            errors.append(f"{label}: Invalid regex pattern: {e}")
 
         # ── directory ─────────────────────────────────────────────────────
         if has_dir:
             dir_step_count += 1
             raw_dir = step["directory"]
-            dir_path = repo / raw_dir
-            if not dir_path.exists():
-                errors.append(f"{label}: Directory does not exist: {raw_dir!r}")
-            elif not dir_path.is_dir():
-                errors.append(f"{label}: Path is not a directory: {raw_dir!r}")
+            if not isinstance(raw_dir, str):
+                errors.append(f"{label}: 'directory' must be a string, got {raw_dir!r}")
+            else:
+                dir_path = repo / raw_dir
+                if not dir_path.exists():
+                    errors.append(f"{label}: Directory does not exist: {raw_dir!r}")
+                elif not dir_path.is_dir():
+                    errors.append(f"{label}: Path is not a directory: {raw_dir!r}")
 
         # ── uri ───────────────────────────────────────────────────────────
         if has_uri:
             uri_step_count += 1
             uri = step["uri"]
-            if not uri.startswith("https://") and not uri.startswith("http://"):
+            if not isinstance(uri, str):
+                errors.append(f"{label}: 'uri' must be a string, got {uri!r}")
+            elif not uri.startswith("https://") and not uri.startswith("http://"):
                 warnings.append(f"{label}: URI should start with https://: {uri!r}")
 
         # ── commands ──────────────────────────────────────────────────────
@@ -238,18 +277,19 @@ def validate_tour(tour_path: str, repo_root: str = ".") -> dict:
     # ── 6. Narrative arc checks ─────────────────────────────────────────────
     first = steps[0]
     last = steps[-1]
-    first_is_orient = "file" not in first and "directory" not in first and "uri" not in first
-    last_is_closing = "file" not in last and "directory" not in last and "uri" not in last
-
-    if not first_is_orient and "directory" not in first:
-        info.append(
-            "First step is a file/uri step — consider starting with a content or directory "
-            "orientation step."
-        )
-    if not last_is_closing:
-        info.append(
-            "Last step is not a content step — consider ending with a closing/summary step."
-        )
+    if isinstance(first, dict):
+        first_is_orient = "file" not in first and "directory" not in first and "uri" not in first
+        if not first_is_orient and "directory" not in first:
+            info.append(
+                "First step is a file/uri step — consider starting with a content or directory "
+                "orientation step."
+            )
+    if isinstance(last, dict):
+        last_is_closing = "file" not in last and "directory" not in last and "uri" not in last
+        if not last_is_closing:
+            info.append(
+                "Last step is not a content step — consider ending with a closing/summary step."
+            )
 
     stats = {
         "total_steps": len(steps),

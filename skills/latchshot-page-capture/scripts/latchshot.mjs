@@ -147,7 +147,10 @@ function parseFlags(tokens) {
 
 function integerFlag(flags, name, fallback, minimum, maximum) {
   const raw = flags.get(name);
-  const value = raw === undefined ? fallback : Number(raw);
+  if (raw !== undefined && !/^-?\d+$/.test(String(raw).trim())) {
+    throw new CliError(`--${name} must be an integer from ${minimum} to ${maximum}`);
+  }
+  const value = raw === undefined ? fallback : Number(String(raw).trim());
   if (!Number.isInteger(value) || value < minimum || value > maximum) {
     throw new CliError(`--${name} must be an integer from ${minimum} to ${maximum}`);
   }

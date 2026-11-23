@@ -73,6 +73,9 @@ function chunk(type, data) {
 // IDAT stream. Ancillary/color chunks are intentionally dropped — every frame
 // shares a uniform RGBA8 IHDR so they are not needed.
 function parsePng(bytes) {
+    if (!bytes || bytes.length < PNG_SIGNATURE.length) {
+        throw new Error("Not a PNG (bad signature)");
+    }
     for (let i = 0; i < PNG_SIGNATURE.length; i++) {
         if (bytes[i] !== PNG_SIGNATURE[i]) {
             throw new Error("Not a PNG (bad signature)");
@@ -82,6 +85,7 @@ function parsePng(bytes) {
     let ihdrData = null;
     let width = 0;
     let height = 0;
+    let sawIend = false;
     const idatParts = [];
     while (off + 8 <= bytes.length) {
         const len = readU32(bytes, off);
@@ -92,20 +96,26 @@ function parsePng(bytes) {
             bytes[off + 7]
         );
         const dataStart = off + 8;
+        if (len > bytes.length - dataStart - 4) {
+            throw new Error("PNG chunk truncated");
+        }
         const data = bytes.subarray(dataStart, dataStart + len);
         if (type === "IHDR") {
+            if (len !== 13) throw new Error("PNG invalid IHDR length");
             ihdrData = data.slice();
             width = readU32(data, 0);
             height = readU32(data, 4);
         } else if (type === "IDAT") {
             idatParts.push(data.slice());
         } else if (type === "IEND") {
+            sawIend = true;
             break;
         }
         off = dataStart + len + 4; // skip data + CRC
     }
     if (!ihdrData) throw new Error("PNG missing IHDR");
     if (idatParts.length === 0) throw new Error("PNG missing IDAT");
+    if (!sawIend) throw new Error("PNG missing IEND");
     return { ihdrData, width, height, idat: concat(idatParts) };
 }
 
