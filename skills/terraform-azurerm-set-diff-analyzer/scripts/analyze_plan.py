@@ -897,6 +897,10 @@ def main():
             print(f"Error: Invalid JSON from stdin: {e}", file=sys.stderr)
             sys.exit(EXIT_ERROR)
 
+    if not isinstance(plan_json, dict):
+        print("Error: Plan root must be a JSON object", file=sys.stderr)
+        sys.exit(EXIT_ERROR)
+
     # Check for empty plan
     resource_changes = plan_json.get("resource_changes", [])
     if not resource_changes:

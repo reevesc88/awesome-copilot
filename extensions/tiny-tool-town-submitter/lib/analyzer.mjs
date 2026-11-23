@@ -257,7 +257,7 @@ function isLikelyBadge(url) {
 }
 
 function normalizeImageUrl(rawUrl, githubUrl, defaultBranch, readmePath, root) {
-    const value = String(rawUrl || "").trim().replace(/^<|>$/g, "").split(/\s+["']/)[0];
+    const value = String(rawUrl || "").trim().split(/\s+["']/)[0].trim().replace(/^<|>$/g, "");
     if (!value || value.startsWith("data:")) return "";
     if (/^https?:\/\//i.test(value)) return isLikelyBadge(value) ? "" : value;
     if (!githubUrl || value.startsWith("#")) return "";

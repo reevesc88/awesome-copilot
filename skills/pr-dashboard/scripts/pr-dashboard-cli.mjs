@@ -243,7 +243,10 @@ async function renderHtml(md, label = "PR Dashboard", prs = []) {
     replaced = replaced.replace(/<div class="meta">[^<]*<\/div>/, `<div class="meta">Generated ${escapeHtml(nowStr)} · ${prs.length} pull requests</div>`);
 
     const counts = { open: 0, merged: 0, closed: 0, draft: 0 };
-    for (const p of prs) counts[p.status.toLowerCase()] = (counts[p.status.toLowerCase()] || 0) + 1;
+    for (const p of prs) {
+      const key = String(p?.status || "").toLowerCase();
+      if (Object.hasOwn(counts, key)) counts[key] += 1;
+    }
 
     function replaceStat(cls, val) {
       const marker = `<div class="${cls}">`;
@@ -283,49 +286,53 @@ function openInBrowser(filePath) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-(async () => {
-  try {
-    const { start, end, label } = parseDateRange(query);
-    const labelWithRange = `${label} (${start} → ${end})`;
+export { escapeHtml, formatHumanDate, pMap, buildMarkdown, renderHtml, getPrDetails, searchIssues };
 
-    console.log(`[pr-dashboard] Fetching PRs for: ${labelWithRange} · role: ${role}`);
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  (async () => {
+    try {
+      const { start, end, label } = parseDateRange(query);
+      const labelWithRange = `${label} (${start} → ${end})`;
 
-    const username = await getGhUsername();
+      console.log(`[pr-dashboard] Fetching PRs for: ${labelWithRange} · role: ${role}`);
 
-    const roleMap = {
-      "Authored by me":   `author:${username}`,
-      "Requested reviews": `review-requested:${username}`,
-      "Assigned to me":   `assignee:${username}`,
-      "All":              `involves:${username}`,
-    };
-    const roleQualifier = roleMap[role] || `author:${username}`;
-    const qstr = `is:pr ${roleQualifier} created:${start}..${end}`;
+      const username = await getGhUsername();
 
-    console.log(`[pr-dashboard] Search: ${qstr}`);
-    const items = await searchIssues(qstr);
-    console.log(`[pr-dashboard] Found ${items.length} PR(s)`);
+      const roleMap = {
+        "Authored by me":   `author:${username}`,
+        "Requested reviews": `review-requested:${username}`,
+        "Assigned to me":   `assignee:${username}`,
+        "All":              `involves:${username}`,
+      };
+      const roleQualifier = roleMap[role] || `author:${username}`;
+      const qstr = `is:pr ${roleQualifier} created:${start}..${end}`;
 
-    if (!items.length) {
-      const extDir = path.dirname(fileURLToPath(import.meta.url));
-      const noResultsPath = path.join(os.tmpdir(), "pr-dashboard-no-results.html");
-      fs.writeFileSync(noResultsPath,
-        `<html><head><title>PR Dashboard — ${labelWithRange}</title></head><body><h1>No PRs found</h1><p>No pull requests matched your query for ${labelWithRange}.</p></body></html>`,
-        "utf8"
-      );
-      openInBrowser(noResultsPath);
-      console.log("[pr-dashboard] No results — opened placeholder page.");
-      return;
+      console.log(`[pr-dashboard] Search: ${qstr}`);
+      const items = await searchIssues(qstr);
+      console.log(`[pr-dashboard] Found ${items.length} PR(s)`);
+
+      if (!items.length) {
+        const noResultsPath = path.join(os.tmpdir(), "pr-dashboard-no-results.html");
+        fs.writeFileSync(noResultsPath,
+          `<html><head><title>PR Dashboard — ${escapeHtml(labelWithRange)}</title></head><body><h1>No PRs found</h1><p>No pull requests matched your query for ${escapeHtml(labelWithRange)}.</p></body></html>`,
+          "utf8"
+        );
+        openInBrowser(noResultsPath);
+        console.log("[pr-dashboard] No results — opened placeholder page.");
+        return;
+      }
+
+      const prs = await pMap(items, getPrDetails, 5);
+      console.log(`[pr-dashboard] Fetched details for ${prs.length} PR(s)`);
+
+      const md  = buildMarkdown(prs, labelWithRange);
+      const out = await renderHtml(md, labelWithRange, prs);
+      openInBrowser(out);
+      console.log(`[pr-dashboard] Dashboard opened: ${out}`);
+    } catch (e) {
+      console.error("[pr-dashboard] Error:", e?.message || e);
+      process.exit(1);
     }
-
-    const prs = await pMap(items, getPrDetails, 5);
-    console.log(`[pr-dashboard] Fetched details for ${prs.length} PR(s)`);
-
-    const md  = buildMarkdown(prs, labelWithRange);
-    const out = await renderHtml(md, labelWithRange, prs);
-    openInBrowser(out);
-    console.log(`[pr-dashboard] Dashboard opened: ${out}`);
-  } catch (e) {
-    console.error("[pr-dashboard] Error:", e?.message || e);
-    process.exit(1);
-  }
-})();
+  })();
+}
