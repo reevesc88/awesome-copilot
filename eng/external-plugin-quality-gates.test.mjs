@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import { spawnSync } from "child_process";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildEphemeralMarketplace,
   buildVallyLintArgs,
@@ -47,6 +48,8 @@ function createTempRepo() {
   runGit(repoDir, "init", "-q");
   runGit(repoDir, "config", "user.name", "Copilot Test");
   runGit(repoDir, "config", "user.email", "copilot@example.com");
+  runGit(repoDir, "config", "commit.gpgSign", "false");
+  runGit(repoDir, "config", "tag.gpgSign", "false");
   return repoDir;
 }
 
@@ -214,6 +217,8 @@ function initRemoteRepo() {
   runGit(repoDir, "init", "-q");
   runGit(repoDir, "config", "user.name", "Copilot Test");
   runGit(repoDir, "config", "user.email", "copilot@example.com");
+  runGit(repoDir, "config", "commit.gpgSign", "false");
+  runGit(repoDir, "config", "tag.gpgSign", "false");
   // Mirror github.com: allow the submission repo to shallow-fetch an arbitrary SHA.
   runGit(repoDir, "config", "uploadpack.allowAnySHA1InWant", "true");
   return repoDir;
@@ -515,6 +520,8 @@ test("runExternalPluginQualityGates orchestrates offline local clone, vally lint
   runGit(remoteRepo, "init", "-q");
   runGit(remoteRepo, "config", "user.name", "Copilot Test");
   runGit(remoteRepo, "config", "user.email", "copilot@example.com");
+  runGit(remoteRepo, "config", "commit.gpgSign", "false");
+  runGit(remoteRepo, "config", "tag.gpgSign", "false");
   runGit(remoteRepo, "config", "uploadpack.allowAnySHA1InWant", "true");
 
   fs.mkdirSync(path.join(remoteRepo, "skills", "demo-skill"), { recursive: true });
@@ -617,7 +624,7 @@ test("runExternalPluginQualityGates orchestrates offline local clone, vally lint
   // CLI usage check when --plugin-json is omitted
   const cliRun = spawnSync(
     process.execPath,
-    [new URL("./external-plugin-quality-gates.mjs", import.meta.url).pathname],
+    [fileURLToPath(new URL("./external-plugin-quality-gates.mjs", import.meta.url))],
     { encoding: "utf8", timeout: SUBPROCESS_TIMEOUT_MS },
   );
   assert.equal(cliRun.status, 1);

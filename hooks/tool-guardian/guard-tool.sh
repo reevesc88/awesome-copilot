@@ -34,20 +34,114 @@ LOG_FILE="$LOG_DIR/guard.log"
 # ---------------------------------------------------------------------------
 # Extract tool name and input text
 # ---------------------------------------------------------------------------
+extract_tool_input_fallback() {
+  local flat="$1"
+  local key_re='"(toolInput|tool_input)"[[:space:]]*:[[:space:]]*'
+  local null_re='^null([]}[:space:],]|$)'
+  local rem="$flat"
+  local combined_vals=""
+  local val="" start_ch="" after_open="" candidate="" ch=""
+  local depth=0 in_str=false esc=false i=0 len=0
+
+  while [[ "$rem" =~ $key_re ]]; do
+    rem="${rem#*"${BASH_REMATCH[0]}"}"
+    [[ -z "$rem" ]] && break
+    start_ch="${rem:0:1}"
+
+    if [[ "$start_ch" == '"' ]]; then
+      after_open="${rem:1}"
+      if [[ "$after_open" == *'"'* ]]; then
+        candidate="${after_open%%\"*}"
+        if [[ "$candidate" != *'\'* ]]; then
+          val="$candidate"
+          rem="${after_open:${#candidate}+1}"
+        else
+          esc=false
+          len=${#after_open}
+          val="$after_open"
+          rem=""
+          for ((i = 0; i < len; i++)); do
+            ch="${after_open:i:1}"
+            if [[ "$esc" == "true" ]]; then
+              esc=false
+            elif [[ "$ch" == '\' ]]; then
+              esc=true
+            elif [[ "$ch" == '"' ]]; then
+              val="${after_open:0:i}"
+              rem="${after_open:i+1}"
+              break
+            fi
+          done
+        fi
+      else
+        val="$after_open"
+        rem=""
+      fi
+      val=$(printf '%s' "$val" | sed 's/\\"/"/g; s/\\\//\//g; s/\\\\/\\/g')
+      combined_vals+="${combined_vals:+ }${val}"
+    elif [[ "$start_ch" == '{' || "$start_ch" == '[' ]]; then
+      depth=0
+      in_str=false
+      esc=false
+      len=${#rem}
+      val="$rem"
+      for ((i = 0; i < len; i++)); do
+        ch="${rem:i:1}"
+        if [[ "$in_str" == "true" ]]; then
+          if [[ "$esc" == "true" ]]; then
+            esc=false
+          elif [[ "$ch" == '\' ]]; then
+            esc=true
+          elif [[ "$ch" == '"' ]]; then
+            in_str=false
+          fi
+        else
+          if [[ "$ch" == '"' ]]; then
+            in_str=true
+          elif [[ "$ch" == '{' || "$ch" == '[' ]]; then
+            depth=$((depth + 1))
+          elif [[ "$ch" == '}' || "$ch" == ']' ]]; then
+            depth=$((depth - 1))
+            if [[ $depth -eq 0 ]]; then
+              val="${rem:0:i+1}"
+              rem="${rem:i+1}"
+              break
+            fi
+          fi
+        fi
+      done
+      if [[ $depth -ne 0 ]]; then
+        rem=""
+      fi
+      val=$(printf '%s' "$val" | sed 's/\\"/"/g; s/\\\//\//g; s/\\\\/\\/g')
+      combined_vals+="${combined_vals:+ }${val}"
+    elif [[ "$rem" =~ $null_re ]]; then
+      rem="${rem:4}"
+    else
+      val="${rem%%[]},[:space:]]*}"
+      rem="${rem:${#val}}"
+      combined_vals+="${combined_vals:+ }${val}"
+    fi
+  done
+
+  printf '%s' "$combined_vals"
+}
+
 TOOL_NAME=""
 TOOL_INPUT=""
+PARSED_WITH_JQ=false
 
-if command -v jq &>/dev/null; then
-  TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.toolName // .tool_name // empty' 2>/dev/null || echo "")
-  TOOL_INPUT=$(printf '%s' "$INPUT" | jq -r '(.toolInput // .tool_input // empty) | if type == "string" then . else tojson end' 2>/dev/null || echo "")
+if command -v jq &>/dev/null && printf '%s' "$INPUT" | jq -e 'type == "object"' &>/dev/null; then
+  PARSED_WITH_JQ=true
+  TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '(.toolName // .tool_name // empty) | if type == "string" then . else tojson end' 2>/dev/null || echo "")
+  TOOL_INPUT=$(printf '%s' "$INPUT" | jq -r 'if (.toolInput != null) then (.toolInput | if type == "string" then . else tojson end) elif (.tool_input != null) then (.tool_input | if type == "string" then . else tojson end) else empty end' 2>/dev/null || echo "")
 fi
 
-# Fallback: extract with grep/sed if jq unavailable or fields empty
-if [[ -z "$TOOL_NAME" ]]; then
-  TOOL_NAME=$(printf '%s' "$INPUT" | grep -oE '"(toolName|tool_name)"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"[[:space:]]*:[[:space:]]*"//;s/"$//' || true)
-fi
-if [[ -z "$TOOL_INPUT" ]]; then
-  TOOL_INPUT=$(printf '%s' "$INPUT" | grep -oE '"(toolInput|tool_input)"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"[[:space:]]*:[[:space:]]*"//;s/"$//' || true)
+# Fallback: extract without jq when jq is unavailable or stdin is not a JSON object
+if [[ "$PARSED_WITH_JQ" != "true" ]]; then
+  FLAT_INPUT=$(printf '%s' "$INPUT" | tr '\r\n' '  ')
+  TOOL_NAME=$(printf '%s\n' "$FLAT_INPUT" | grep -oE '"(toolName|tool_name)"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' | head -1 | sed -E 's/^"(toolName|tool_name)"[[:space:]]*:[[:space:]]*"//;s/"$//' || true)
+  TOOL_INPUT=$(extract_tool_input_fallback "$FLAT_INPUT")
 fi
 
 # Combine for pattern matching

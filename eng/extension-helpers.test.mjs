@@ -78,11 +78,22 @@ test("daily-focus-board board-core guards IDs, cross-site headers, concurrent mu
   assert.equal(m1.ok, true);
   assert.equal(m2.ok, true);
 
-  // Boolean / whitespace count inputs are rejected instead of coerced to 0/1
-  const badBoolCount = await handleApi(stateFile, "count", { id: "steps", value: false });
-  assert.equal(badBoolCount.ok, false);
-  const badBlankCount = await handleApi(stateFile, "count", { id: "steps", inc: "   " });
-  assert.equal(badBlankCount.ok, false);
+  // Boolean, blank-string, array, and object count inputs are rejected and leave counter unchanged
+  for (const badInput of [false, true, "   ", [], [7], {}]) {
+    const badVal = await handleApi(stateFile, "count", { id: "steps", value: badInput });
+    assert.equal(badVal.ok, false);
+    const badInc = await handleApi(stateFile, "count", { id: "steps", inc: badInput });
+    assert.equal(badInc.ok, false);
+    assert.equal((await loadDoc(stateFile)).progress.counters.steps, 10000);
+  }
+
+  // Valid numeric controls including 0 and numeric strings remain accepted
+  assert.equal((await handleApi(stateFile, "count", { id: "steps", value: 0 })).ok, true);
+  assert.equal((await loadDoc(stateFile)).progress.counters.steps, 0);
+  assert.equal((await handleApi(stateFile, "count", { id: "steps", inc: "7" })).ok, true);
+  assert.equal((await loadDoc(stateFile)).progress.counters.steps, 7);
+  assert.equal((await handleApi(stateFile, "count", { id: "steps", value: "10000" })).ok, true);
+  assert.equal((await loadDoc(stateFile)).progress.counters.steps, 10000);
 
   // Progress notes auto-advance todo -> doing; carry, focus, momentum, brain, rm, add-task
   await handleApi(stateFile, "progress", { id: "deep", txt: "Drafted architecture outline" });

@@ -30,6 +30,8 @@ function initGitRepo(dir) {
     ["init", "-q"],
     ["config", "user.name", "Test User"],
     ["config", "user.email", "test@example.com"],
+    ["config", "commit.gpgSign", "false"],
+    ["config", "tag.gpgSign", "false"],
   ]) {
     const res = runScript("git", args, { cwd: dir });
     assert.equal(res.status, 0, res.stderr);
@@ -183,6 +185,43 @@ test("tool-guardian handles empty/object inputs, allowlists, warn vs block modes
     input: JSON.stringify({ toolName: "bash", toolInput: "chmod 777 secret.txt" }),
   });
   assert.equal(fallbackBlocked.status, 1);
+
+  // Object-valued tool_input without jq must also block dangerous commands and allow safe ones
+  const fallbackObjectBlocked = runScript(path.join(noJqBin, "bash"), [script], {
+    cwd,
+    env: { PATH: noJqBin, TOOL_GUARD_LOG_DIR: logDir, GUARD_MODE: "block" },
+    input: JSON.stringify({
+      tool_name: "bash",
+      tool_input: { command: "git push --force origin main" },
+    }),
+  });
+  assert.equal(fallbackObjectBlocked.status, 1, fallbackObjectBlocked.stderr);
+  assert.match(fallbackObjectBlocked.stdout, /Operation blocked/);
+  assert.match(fallbackObjectBlocked.stdout, /git push --force origin main/);
+
+  const fallbackNestedBlocked = runScript("/bin/bash", [script], {
+    cwd,
+    env: { PATH: noJqBin, TOOL_GUARD_LOG_DIR: logDir, GUARD_MODE: "block" },
+    input: JSON.stringify(
+      {
+        tool_name: "bash",
+        tool_input: {
+          tool_input: "safe decoy",
+          nested: { command: 'echo "hi" && git push --force origin master' },
+        },
+      },
+      null,
+      2,
+    ),
+  });
+  assert.equal(fallbackNestedBlocked.status, 1, fallbackNestedBlocked.stderr);
+
+  const fallbackObjectClean = runScript(path.join(noJqBin, "bash"), [script], {
+    cwd,
+    env: { PATH: noJqBin, TOOL_GUARD_LOG_DIR: logDir, GUARD_MODE: "block" },
+    input: JSON.stringify({ tool_name: "bash", tool_input: { command: "git status" } }),
+  });
+  assert.equal(fallbackObjectClean.status, 0, fallbackObjectClean.stderr);
 
   const lines = fs
     .readFileSync(path.join(logDir, "guard.log"), "utf8")

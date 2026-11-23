@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   extractSubmissionData,
   matchExternalPluginForIssue,
@@ -153,7 +154,7 @@ test("removePluginFromExternalJson removes matched plugin and throws when unmatc
   );
 
   // Repo-only removal and CLI usage/remove execution
-  const cliPath = new URL("./external-plugin-rereview.mjs", import.meta.url).pathname;
+  const cliPath = fileURLToPath(new URL("./external-plugin-rereview.mjs", import.meta.url));
   assert.equal(spawnSync(process.execPath, [cliPath], { encoding: "utf8", timeout: 10_000 }).status, 1);
   assert.equal(spawnSync(process.execPath, [cliPath, "remove"], { encoding: "utf8", timeout: 10_000 }).status, 1);
 
