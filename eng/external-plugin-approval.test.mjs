@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
   DECISION_COMMANDS,
@@ -123,4 +125,17 @@ test("upsertExternalPlugin inserts sorted entries, updates matching plugins, and
       ),
     /local-conflict/,
   );
+
+  // Rejects corrupt existing external.json and CLI missing-args usage exits 1
+  const badJsonPath = path.join(dir, "corrupt-external.json");
+  fs.writeFileSync(badJsonPath, "{not-json", "utf8");
+  assert.throws(() => upsertExternalPlugin(beta, { filePath: badJsonPath, localPluginNames: [] }));
+
+  const scriptPath = fileURLToPath(new URL("./external-plugin-approval.mjs", import.meta.url));
+  const cliBadArgs = spawnSync(process.execPath, [scriptPath], {
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  assert.equal(cliBadArgs.status, 1);
+  assert.match(cliBadArgs.stderr, /Usage: node \.\/eng\/external-plugin-approval\.mjs approve/);
 });

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
   escapeMarkdownCell,
@@ -192,4 +194,23 @@ test("generateOpenPrReport writes markdown and bucketed JSON files offline", (t)
   assert.deepEqual(readIds("prs-staged-10-to-50-files.json"), [4]);
   assert.deepEqual(readIds("prs-staged-over-50-files.json"), [5]);
   assert.equal(fs.existsSync(path.join(outputDir, "open-pr-report.md")), true);
+
+  // CLI --help exits 0 and prints usage; missing gh command fails cleanly
+  const scriptPath = fileURLToPath(new URL("./generate-open-pr-report.mjs", import.meta.url));
+  const helpRun = spawnSync(process.execPath, [scriptPath, "--help"], {
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  assert.equal(helpRun.status, 0);
+  assert.match(helpRun.stdout, /Usage: node eng\/generate-open-pr-report\.mjs/);
+
+  const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), "awesome-copilot-open-pr-nogh-"));
+  t.after(() => fs.rmSync(emptyBin, { recursive: true, force: true }));
+  const missingGhRun = spawnSync(process.execPath, [scriptPath, "--output-dir", outputDir], {
+    env: { ...process.env, PATH: emptyBin },
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  assert.equal(missingGhRun.status, 1);
+  assert.match(missingGhRun.stderr, /Missing required command: gh/);
 });
