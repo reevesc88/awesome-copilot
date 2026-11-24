@@ -21,6 +21,7 @@ Examples:
     python add-icon-to-diagram.py diagram.excalidraw EC2 500 300 --use-edit-suffix
 """
 
+import copy
 import json
 import sys
 import uuid
@@ -55,6 +56,9 @@ def calculate_bounding_box(elements: List[Dict[str, Any]]) -> Tuple[float, float
             max_x = max(max_x, x + width)
             max_y = max(max_y, y + height)
     
+    if min_x == float('inf'):
+        return (0, 0, 0, 0)
+
     return (min_x, min_y, max_x, max_y)
 
 
@@ -102,7 +106,7 @@ def transform_icon_elements(
     # Transform elements
     transformed = []
     for element in elements:
-        new_element = element.copy()
+        new_element = copy.deepcopy(element)
         
         # Update coordinates
         if 'x' in new_element:
@@ -393,11 +397,15 @@ def main():
         print(f"Error: Library path not found: {library_path}")
         sys.exit(1)
     
+    work_path = None
+    final_path = None
     try:
         work_path, final_path = prepare_edit_path(diagram_path, use_edit_suffix)
         add_icon_to_diagram(work_path, icon_name, x, y, library_path, label)
         finalize_edit_path(work_path, final_path)
     except Exception as e:
+        if final_path is not None and work_path is not None and work_path.exists() and not final_path.exists():
+            work_path.rename(final_path)
         print(f"Error: {e}")
         sys.exit(1)
 
