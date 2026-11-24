@@ -16,13 +16,46 @@ function makeTempDir(t, prefix = "awesome-copilot-media-eyeball-") {
   return dir;
 }
 
-const PYTHON_EXECUTABLE = (() => {
-  const probe = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], {
-    encoding: "utf8",
-    timeout: SUBPROCESS_TIMEOUT_MS,
-  });
-  return probe.status === 0 && probe.stdout.trim() ? probe.stdout.trim() : "python3";
+const PYTHON_INFO = (() => {
+  const probe = spawnSync(
+    "python3",
+    [
+      "-B",
+      "-E",
+      "-c",
+      "import json, sys; print(json.dumps({'executable': sys.executable, 'version': list(sys.version_info[:3])}))",
+    ],
+    {
+      encoding: "utf8",
+      timeout: SUBPROCESS_TIMEOUT_MS,
+    },
+  );
+  if (probe.status !== 0 || !probe.stdout.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(probe.stdout.trim());
+  } catch {
+    return null;
+  }
 })();
+
+const PYTHON_EXECUTABLE = PYTHON_INFO?.executable || "python3";
+
+function ensurePython(t, minMajor = 3, minMinor = 0, pythonInfo = PYTHON_INFO) {
+  if (!pythonInfo) {
+    t.skip("python3 is not available");
+    return false;
+  }
+  const [major = 0, minor = 0, patch = 0] = Array.isArray(pythonInfo.version)
+    ? pythonInfo.version
+    : [];
+  if (major < minMajor || (major === minMajor && minor < minMinor)) {
+    t.skip(`python3 >= ${minMajor}.${minMinor} required (found ${major}.${minor}.${patch})`);
+    return false;
+  }
+  return true;
+}
 
 function runPython(args, { cwd, env = {} } = {}) {
   return spawnSync(PYTHON_EXECUTABLE, ["-B", "-E", ...args], {
@@ -51,9 +84,27 @@ const {
   resolveRenderer,
 } = await import(`data:text/javascript;base64,${Buffer.from(drawioTestableSource, "utf8").toString("base64")}`);
 
+test("ensurePython skips explicitly when python3 is missing or older than the required version", () => {
+  const skipMessages = [];
+  const fakeContext = { skip: (msg) => skipMessages.push(msg) };
+
+  assert.equal(ensurePython(fakeContext, 3, 10, null), false);
+  assert.equal(
+    ensurePython(fakeContext, 3, 10, { executable: "/usr/bin/python3", version: [3, 9, 18] }),
+    false,
+  );
+  assert.equal(
+    ensurePython(fakeContext, 3, 10, { executable: "/usr/bin/python3", version: [3, 10, 0] }),
+    true,
+  );
+  assert.deepEqual(skipMessages, [
+    "python3 is not available",
+    "python3 >= 3.10 required (found 3.9.18)",
+  ]);
+});
+
 test("excalidraw split-excalidraw-library sanitizes filenames, enforces single-library invariants, and generates sorted reference.md", (t) => {
-  if (runPython(["--version"]).status !== 0) {
-    t.skip("python3 is not available");
+  if (!ensurePython(t, 3, 8)) {
     return;
   }
 
@@ -135,15 +186,15 @@ print("OK")
 
   const refMd = fs.readFileSync(path.join(validLibDir, "reference.md"), "utf8");
   assert.match(refMd, /# cloud-icons Reference/);
-  assert.ok(
-    refMd.indexOf("| Alpha Gateway! | `icons/Alpha-Gateway.json` |") <
-      refMd.indexOf("| Zebra Queue / Bus | `icons/Zebra-Queue-Bus.json` |"),
-  );
+  const alphaRowPos = refMd.indexOf("| Alpha Gateway! | `icons/Alpha-Gateway.json` |");
+  const zebraRowPos = refMd.indexOf("| Zebra Queue / Bus | `icons/Zebra-Queue-Bus.json` |");
+  assert.ok(alphaRowPos >= 0, "expected Alpha Gateway row in reference.md");
+  assert.ok(zebraRowPos >= 0, "expected Zebra Queue / Bus row in reference.md");
+  assert.ok(alphaRowPos < zebraRowPos, "expected Alpha row before Zebra row in reference.md");
 });
 
 test("nano-banana-pro-openrouter generate_image.py validates inputs, corrects MIME extensions, and saves multi-image payloads offline", (t) => {
-  if (runPython(["--version"]).status !== 0) {
-    t.skip("python3 is not available");
+  if (!ensurePython(t, 3, 10)) {
     return;
   }
 
@@ -285,8 +336,7 @@ print("OK")
 });
 
 test("eyeball.py stitches multi-page anchor regions, builds annotated Word docs, converts via LibreOffice stub, and checks setup offline", (t) => {
-  if (runPython(["--version"]).status !== 0) {
-    t.skip("python3 is not available");
+  if (!ensurePython(t, 3, 8)) {
     return;
   }
 
