@@ -21,14 +21,119 @@ Examples:
     python add-icon-to-diagram.py diagram.excalidraw EC2 500 300 --use-edit-suffix
 """
 
+from contextlib import contextmanager
 import copy
 import json
 import os
+import stat
 import sys
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
+
+
+_DACL_SECURITY_INFORMATION = 0x00000004
+_SE_DACL_PROTECTED = 0x1000
+_GENERIC_WRITE = 0x40000000
+_WRITE_DAC = 0x00040000
+_CREATE_NEW = 1
+_FILE_ATTRIBUTE_NORMAL = 0x00000080
+_ERROR_FILE_EXISTS = 80
+
+_THREAD_LOCKS: Dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _get_thread_lock(key: str) -> threading.Lock:
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _THREAD_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def diagram_edit_lock(diagram_path: Path):
+    """Serialize prepare, promotion, and cleanup for a target diagram across processes."""
+    resolved = diagram_path.resolve()
+    if not resolved.parent.exists():
+        yield
+        return
+    lock_path = resolved.with_name(f".{resolved.name}.lock")
+    thread_lock = _get_thread_lock(os.path.normcase(str(lock_path)))
+    with thread_lock:
+        if os.name == "nt":
+            import msvcrt
+
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o666)
+            locked = False
+            try:
+                while True:
+                    try:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                        locked = True
+                        break
+                    except OSError:
+                        continue
+                yield
+            finally:
+                try:
+                    if locked:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                finally:
+                    os.close(fd)
+                    try:
+                        os.unlink(lock_path)
+                    except OSError:
+                        pass
+        else:
+            import fcntl
+
+            fd = -1
+            while True:
+                fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o666)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                    try:
+                        st_path = os.stat(lock_path)
+                    except FileNotFoundError:
+                        os.close(fd)
+                        continue
+                    if os.path.samestat(os.fstat(fd), st_path):
+                        break
+                    os.close(fd)
+                except BaseException:
+                    os.close(fd)
+                    raise
+            try:
+                yield
+            finally:
+                try:
+                    st_cur = os.stat(lock_path)
+                    if os.path.samestat(os.fstat(fd), st_cur):
+                        os.unlink(lock_path)
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(fd)
+
+
+def _same_file_identity(st1: os.stat_result, st2: os.stat_result) -> bool:
+    if st1.st_ino and st2.st_ino:
+        return os.path.samestat(st1, st2)
+    return st1.st_mtime_ns == st2.st_mtime_ns and st1.st_size == st2.st_size
 
 
 def generate_unique_id() -> str:
@@ -192,20 +297,22 @@ def prepare_edit_path(diagram_path: Path, use_edit_suffix: bool) -> tuple[Path, 
         - work_path: file path to read/write during edit
         - final_path: file path to rename back to (or None if not used)
     """
+    resolved_path = diagram_path.resolve()
+
     if not use_edit_suffix:
-        return diagram_path, None
+        return resolved_path, None
 
-    if diagram_path.suffix != ".excalidraw":
-        return diagram_path, None
+    if resolved_path.suffix != ".excalidraw":
+        return resolved_path, None
 
-    edit_path = diagram_path.with_suffix(diagram_path.suffix + ".edit")
+    edit_path = resolved_path.with_suffix(resolved_path.suffix + ".edit")
 
-    if diagram_path.exists():
+    if resolved_path.exists():
         if edit_path.exists():
             raise FileExistsError(f"Edit file already exists: {edit_path}")
-        diagram_path.rename(edit_path)
+        resolved_path.rename(edit_path)
 
-    return edit_path, diagram_path
+    return edit_path, resolved_path
 
 
 def finalize_edit_path(
@@ -217,15 +324,40 @@ def finalize_edit_path(
     if final_path is None:
         return
 
+    backup_stat: os.stat_result | None = None
+    if staged_path is not None and work_path != final_path:
+        try:
+            backup_stat = work_path.lstat()
+        except OSError:
+            backup_stat = None
+
     source_path = staged_path if staged_path is not None else work_path
     os.replace(source_path, final_path)
 
-    if staged_path is not None and work_path != final_path:
+    if staged_path is not None and work_path != final_path and backup_stat is not None:
+        try:
+            current_stat = work_path.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as cleanup_err:
+            print(
+                f"Warning: Insertion committed to {final_path}, but could not inspect backup "
+                f"{work_path}: {cleanup_err}. Confirm no edit is active, then move {work_path} "
+                f"out of the way before continuing.",
+                file=sys.stderr,
+            )
+            return
+
+        if not _same_file_identity(backup_stat, current_stat):
+            return
+
         try:
             work_path.unlink(missing_ok=True)
         except OSError as cleanup_err:
             print(
-                f"Warning: Could not remove temporary edit file {work_path}: {cleanup_err}",
+                f"Warning: Insertion committed to {final_path}, but could not remove backup "
+                f"{work_path}: {cleanup_err}. Confirm no edit is active, then move {work_path} "
+                f"out of the way before continuing.",
                 file=sys.stderr,
             )
 
@@ -236,33 +368,218 @@ def restore_edit_path(work_path: Path, final_path: Path) -> None:
         return
 
     try:
-        if os.name == "nt":
+        if _is_windows():
             os.rename(work_path, final_path)
         else:
             os.link(work_path, final_path)
-            work_path.unlink()
     except FileExistsError:
         return
-    except OSError:
+    except OSError as restore_err:
+        print(
+            f"Warning: Could not restore diagram {final_path} from backup {work_path}: "
+            f"{restore_err}. Original diagram remains at {work_path}.",
+            file=sys.stderr,
+        )
         return
 
+    if not _is_windows():
+        try:
+            work_path.unlink()
+        except OSError as unlink_err:
+            print(
+                f"Warning: Restored {final_path}, but could not remove backup {work_path}: {unlink_err}",
+                file=sys.stderr,
+            )
 
-def write_diagram_atomic(diagram: Dict[str, Any], target_path: Path) -> None:
-    """Write diagram JSON to a temporary file and atomically replace target_path."""
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode='w',
-            encoding='utf-8',
-            dir=target_path.parent,
-            prefix=f".{target_path.name}.",
+
+def _get_windows_dacl_sd(source_path: Path):
+    """Fetch a self-relative SECURITY_DESCRIPTOR containing source_path's DACL on Windows."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    advapi32.GetFileSecurityW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    advapi32.GetFileSecurityW.restype = wintypes.BOOL
+
+    needed = wintypes.DWORD(0)
+    advapi32.GetFileSecurityW(
+        str(source_path),
+        _DACL_SECURITY_INFORMATION,
+        None,
+        0,
+        ctypes.byref(needed),
+    )
+    if needed.value == 0:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    sd_buf = ctypes.create_string_buffer(needed.value)
+    if not advapi32.GetFileSecurityW(
+        str(source_path),
+        _DACL_SECURITY_INFORMATION,
+        sd_buf,
+        needed.value,
+        ctypes.byref(needed),
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return sd_buf
+
+
+def _open_windows_temp_file(parent_dir: Path, prefix: str, source_sd):
+    """Create a temporary text writer on Windows with source_sd applied before writing."""
+    if source_sd is None:
+        tmp_file = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=parent_dir,
+            prefix=prefix,
             suffix=".tmp",
             delete=False,
-        ) as tmp_file:
-            temp_path = Path(tmp_file.name)
-            json.dump(diagram, tmp_file, indent=2, ensure_ascii=False)
-            tmp_file.flush()
-            os.fsync(tmp_file.fileno())
+        )
+        return Path(tmp_file.name), tmp_file
+
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    class _SECURITY_ATTRIBUTES(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", wintypes.LPVOID),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    advapi32.SetSecurityDescriptorControl.argtypes = [
+        wintypes.LPVOID,
+        wintypes.WORD,
+        wintypes.WORD,
+    ]
+    advapi32.SetSecurityDescriptorControl.restype = wintypes.BOOL
+    advapi32.SetKernelObjectSecurity.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+    ]
+    advapi32.SetKernelObjectSecurity.restype = wintypes.BOOL
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(_SECURITY_ATTRIBUTES),
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    # Block parent-directory ACL inheritance at creation time so no account denied by
+    # the original diagram ever gains inherited read access on the temp or staged file.
+    protected_sd = ctypes.create_string_buffer(source_sd.raw, len(source_sd))
+    if not advapi32.SetSecurityDescriptorControl(
+        protected_sd, _SE_DACL_PROTECTED, _SE_DACL_PROTECTED
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    sa = _SECURITY_ATTRIBUTES(
+        nLength=ctypes.sizeof(_SECURITY_ATTRIBUTES),
+        lpSecurityDescriptor=ctypes.cast(protected_sd, wintypes.LPVOID),
+        bInheritHandle=False,
+    )
+    invalid_handle = wintypes.HANDLE(-1).value
+
+    while True:
+        candidate = parent_dir / f"{prefix}{uuid.uuid4().hex}.tmp"
+        handle = kernel32.CreateFileW(
+            str(candidate),
+            _GENERIC_WRITE | _WRITE_DAC,
+            0,
+            ctypes.byref(sa),
+            _CREATE_NEW,
+            _FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+        if handle is None or handle == invalid_handle:
+            err = ctypes.get_last_error()
+            if err == _ERROR_FILE_EXISTS:
+                continue
+            raise ctypes.WinError(err)
+
+        handle_owned = True
+        fd = -1
+        try:
+            if not advapi32.SetKernelObjectSecurity(
+                handle, _DACL_SECURITY_INFORMATION, source_sd
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            fd = msvcrt.open_osfhandle(
+                handle, os.O_WRONLY | getattr(os, "O_BINARY", 0)
+            )
+            handle_owned = False
+            writer = os.fdopen(fd, "w", encoding="utf-8")
+            fd = -1
+            return candidate, writer
+        except BaseException:
+            if fd != -1:
+                os.close(fd)
+            elif handle_owned:
+                kernel32.CloseHandle(handle)
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+
+def write_diagram_atomic(
+    diagram: Dict[str, Any],
+    target_path: Path,
+    metadata_source: Path | None = None,
+) -> None:
+    """Write diagram JSON to a temporary file and atomically replace target_path."""
+    source_for_metadata = metadata_source if metadata_source is not None else target_path
+    source_exists = source_for_metadata.exists()
+    temp_path: Path | None = None
+    try:
+        prefix = f".{target_path.name}."
+        if _is_windows():
+            source_sd = _get_windows_dacl_sd(source_for_metadata) if source_exists else None
+            temp_path, tmp_writer = _open_windows_temp_file(
+                target_path.parent, prefix, source_sd
+            )
+            with tmp_writer as tmp_file:
+                json.dump(diagram, tmp_file, indent=2, ensure_ascii=False)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+        else:
+            source_mode = (
+                stat.S_IMODE(source_for_metadata.stat().st_mode)
+                if source_exists
+                else None
+            )
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=target_path.parent,
+                prefix=prefix,
+                suffix=".tmp",
+                delete=False,
+            ) as tmp_file:
+                temp_path = Path(tmp_file.name)
+                json.dump(diagram, tmp_file, indent=2, ensure_ascii=False)
+                tmp_file.flush()
+                os.fsync(tmp_file.fileno())
+            if source_mode is not None:
+                os.chmod(temp_path, source_mode)
         os.replace(temp_path, target_path)
     except BaseException:
         if temp_path is not None:
@@ -330,7 +647,7 @@ def add_icon_to_diagram(
     x: float,
     y: float,
     library_path: Path,
-    label: str = None,
+    label: str | None = None,
     output_path: Path | None = None,
 ) -> None:
     """
@@ -358,7 +675,6 @@ def add_icon_to_diagram(
     if label and transformed_elements:
         min_x, min_y, max_x, max_y = calculate_bounding_box(transformed_elements)
         icon_width = max_x - min_x
-        icon_height = max_y - min_y
         
         # Position label below icon, centered
         label_x = min_x + (icon_width / 2) - (len(label) * 5)
@@ -368,9 +684,10 @@ def add_icon_to_diagram(
         transformed_elements.append(label_element)
         print(f"  Added label: '{label}'")
     
-    # Load diagram
+    # Resolve symlinks so direct writes update the target file without replacing the symlink
+    source_path = diagram_path.resolve()
     print(f"Loading diagram: {diagram_path}")
-    with open(diagram_path, 'r', encoding='utf-8') as f:
+    with open(source_path, 'r', encoding='utf-8') as f:
         diagram = json.load(f)
     
     # Add transformed elements
@@ -382,9 +699,9 @@ def add_icon_to_diagram(
     print(f"  Added {len(transformed_elements)} elements (total: {original_count} -> {len(diagram['elements'])})")
     
     # Save diagram atomically via temporary file so partial writes never corrupt the original
-    destination_path = output_path if output_path is not None else diagram_path
-    print(f"Saving diagram")
-    write_diagram_atomic(diagram, destination_path)
+    destination_path = output_path if output_path is not None else source_path
+    print("Saving diagram")
+    write_diagram_atomic(diagram, destination_path, metadata_source=source_path)
     
     print(f"✓ Successfully added '{icon_name}' icon to diagram")
 
@@ -446,11 +763,7 @@ def main():
             print(f"Error: Unknown option: {sys.argv[i]}")
             sys.exit(1)
     
-    # Validate inputs
-    if not diagram_path.exists():
-        print(f"Error: Diagram file not found: {diagram_path}")
-        sys.exit(1)
-    
+    # Validate library path before acquiring per-diagram lock
     if not library_path.exists():
         print(f"Error: Library path not found: {library_path}")
         sys.exit(1)
@@ -459,24 +772,33 @@ def main():
     final_path = None
     staged_path = None
     try:
-        work_path, final_path = prepare_edit_path(diagram_path, use_edit_suffix)
-        if final_path is not None:
-            staged_path = final_path.with_name(f".{final_path.name}.{uuid.uuid4().hex}.staged")
-            add_icon_to_diagram(
-                work_path, icon_name, x, y, library_path, label, output_path=staged_path
-            )
-            finalize_edit_path(work_path, final_path, staged_path=staged_path)
-        else:
-            add_icon_to_diagram(work_path, icon_name, x, y, library_path, label)
-            finalize_edit_path(work_path, final_path)
-    except Exception as e:
-        if staged_path is not None:
+        with diagram_edit_lock(diagram_path):
+            if not diagram_path.exists():
+                print(f"Error: Diagram file not found: {diagram_path}")
+                sys.exit(1)
             try:
-                staged_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        if final_path is not None and work_path is not None:
-            restore_edit_path(work_path, final_path)
+                work_path, final_path = prepare_edit_path(diagram_path, use_edit_suffix)
+                if final_path is not None:
+                    staged_path = final_path.with_name(
+                        f".{final_path.name}.{uuid.uuid4().hex}.staged"
+                    )
+                    add_icon_to_diagram(
+                        work_path, icon_name, x, y, library_path, label, output_path=staged_path
+                    )
+                    finalize_edit_path(work_path, final_path, staged_path=staged_path)
+                else:
+                    add_icon_to_diagram(work_path, icon_name, x, y, library_path, label)
+                    finalize_edit_path(work_path, final_path)
+            except BaseException:
+                if staged_path is not None:
+                    try:
+                        staged_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                if final_path is not None and work_path is not None:
+                    restore_edit_path(work_path, final_path)
+                raise
+    except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
 

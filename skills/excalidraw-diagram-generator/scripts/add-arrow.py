@@ -18,11 +18,98 @@ Examples:
     python add-arrow.py diagram.excalidraw 300 200 500 300 --use-edit-suffix
 """
 
+from contextlib import contextmanager
 import json
+import os
 import sys
+import threading
 import uuid
 from pathlib import Path
 from typing import Dict, Any
+
+
+_THREAD_LOCKS: Dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _get_thread_lock(key: str) -> threading.Lock:
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _THREAD_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def diagram_edit_lock(diagram_path: Path):
+    """Serialize prepare, promotion, and cleanup for a target diagram across processes."""
+    resolved = diagram_path.resolve()
+    if not resolved.parent.exists():
+        yield
+        return
+    lock_path = resolved.with_name(f".{resolved.name}.lock")
+    thread_lock = _get_thread_lock(os.path.normcase(str(lock_path)))
+    with thread_lock:
+        if os.name == "nt":
+            import msvcrt
+
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o666)
+            locked = False
+            try:
+                while True:
+                    try:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                        locked = True
+                        break
+                    except OSError:
+                        continue
+                yield
+            finally:
+                try:
+                    if locked:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                finally:
+                    os.close(fd)
+                    try:
+                        os.unlink(lock_path)
+                    except OSError:
+                        pass
+        else:
+            import fcntl
+
+            fd = -1
+            while True:
+                fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o666)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                    try:
+                        st_path = os.stat(lock_path)
+                    except FileNotFoundError:
+                        os.close(fd)
+                        continue
+                    if os.path.samestat(os.fstat(fd), st_path):
+                        break
+                    os.close(fd)
+                except BaseException:
+                    os.close(fd)
+                    raise
+            try:
+                yield
+            finally:
+                try:
+                    st_cur = os.stat(lock_path)
+                    if os.path.samestat(os.fstat(fd), st_cur):
+                        os.unlink(lock_path)
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(fd)
 
 
 def generate_unique_id() -> str:
@@ -39,20 +126,22 @@ def prepare_edit_path(diagram_path: Path, use_edit_suffix: bool) -> tuple[Path, 
         - work_path: file path to read/write during edit
         - final_path: file path to rename back to (or None if not used)
     """
+    resolved_path = diagram_path.resolve()
+
     if not use_edit_suffix:
-        return diagram_path, None
+        return resolved_path, None
 
-    if diagram_path.suffix != ".excalidraw":
-        return diagram_path, None
+    if resolved_path.suffix != ".excalidraw":
+        return resolved_path, None
 
-    edit_path = diagram_path.with_suffix(diagram_path.suffix + ".edit")
+    edit_path = resolved_path.with_suffix(resolved_path.suffix + ".edit")
 
-    if diagram_path.exists():
+    if resolved_path.exists():
         if edit_path.exists():
             raise FileExistsError(f"Edit file already exists: {edit_path}")
-        diagram_path.rename(edit_path)
+        resolved_path.rename(edit_path)
 
-    return edit_path, diagram_path
+    return edit_path, resolved_path
 
 
 def finalize_edit_path(work_path: Path, final_path: Path | None) -> None:
@@ -60,10 +149,37 @@ def finalize_edit_path(work_path: Path, final_path: Path | None) -> None:
     if final_path is None:
         return
 
-    if final_path.exists():
-        final_path.unlink()
+    os.replace(work_path, final_path)
 
-    work_path.rename(final_path)
+
+def restore_edit_path(work_path: Path, final_path: Path) -> None:
+    """Restore original .edit file to final_path without replacing an existing file."""
+    if not work_path.exists():
+        return
+
+    try:
+        if os.name == "nt":
+            os.rename(work_path, final_path)
+        else:
+            os.link(work_path, final_path)
+    except FileExistsError:
+        return
+    except OSError as restore_err:
+        print(
+            f"Warning: Could not restore diagram {final_path} from backup {work_path}: "
+            f"{restore_err}. Original diagram remains at {work_path}.",
+            file=sys.stderr,
+        )
+        return
+
+    if os.name != "nt":
+        try:
+            work_path.unlink()
+        except OSError as unlink_err:
+            print(
+                f"Warning: Restored {final_path}, but could not remove backup {work_path}: {unlink_err}",
+                file=sys.stderr,
+            )
 
 
 def create_arrow(
@@ -73,7 +189,7 @@ def create_arrow(
     to_y: float,
     style: str = "solid",
     color: str = "#1e1e1e",
-    label: str = None
+    label: str | None = None,
 ) -> list:
     """
     Create an arrow element.
@@ -189,7 +305,7 @@ def add_arrow_to_diagram(
     to_y: float,
     style: str = "solid",
     color: str = "#1e1e1e",
-    label: str = None
+    label: str | None = None,
 ) -> None:
     """
     Add an arrow to an Excalidraw diagram.
@@ -224,11 +340,11 @@ def add_arrow_to_diagram(
     print(f"  Added {len(arrow_elements)} elements (total: {original_count} -> {len(diagram['elements'])})")
     
     # Save diagram
-    print(f"Saving diagram")
+    print("Saving diagram")
     with open(diagram_path, 'w', encoding='utf-8') as f:
         json.dump(diagram, f, indent=2, ensure_ascii=False)
     
-    print(f"✓ Successfully added arrow to diagram")
+    print("✓ Successfully added arrow to diagram")
 
 
 def main():
@@ -297,15 +413,23 @@ def main():
             print(f"Error: Unknown option: {sys.argv[i]}")
             sys.exit(1)
     
-    # Validate inputs
-    if not diagram_path.exists():
-        print(f"Error: Diagram file not found: {diagram_path}")
-        sys.exit(1)
-    
+    work_path = None
+    final_path = None
     try:
-        work_path, final_path = prepare_edit_path(diagram_path, use_edit_suffix)
-        add_arrow_to_diagram(work_path, from_x, from_y, to_x, to_y, style, color, label)
-        finalize_edit_path(work_path, final_path)
+        with diagram_edit_lock(diagram_path):
+            if not diagram_path.exists():
+                print(f"Error: Diagram file not found: {diagram_path}")
+                sys.exit(1)
+            try:
+                work_path, final_path = prepare_edit_path(diagram_path, use_edit_suffix)
+                add_arrow_to_diagram(
+                    work_path, from_x, from_y, to_x, to_y, style, color, label
+                )
+                finalize_edit_path(work_path, final_path)
+            except BaseException:
+                if final_path is not None and work_path is not None:
+                    restore_edit_path(work_path, final_path)
+                raise
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
