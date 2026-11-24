@@ -45,12 +45,16 @@ var RenderConfig = (function () {
     var config = JSON.parse(JSON.stringify(defaults));
     var listeners = [];
 
+    function isUnsafeKey(key) {
+        return key === '__proto__' || key === 'constructor' || key === 'prototype';
+    }
+
     /**
      * Deep merge source into target, preserving existing keys.
      */
     function merge(target, source) {
         for (var key in source) {
-            if (!source.hasOwnProperty(key)) continue;
+            if (!Object.prototype.hasOwnProperty.call(source, key) || isUnsafeKey(key)) continue;
             if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
                 if (!target[key]) target[key] = {};
                 merge(target[key], source[key]);
@@ -111,6 +115,9 @@ var RenderConfig = (function () {
      */
     function set(path, value) {
         var keys = path.split('.');
+        for (var j = 0; j < keys.length; j++) {
+            if (!keys[j] || isUnsafeKey(keys[j])) return;
+        }
         var obj = config;
         for (var i = 0; i < keys.length - 1; i++) {
             if (!obj[keys[i]]) obj[keys[i]] = {};

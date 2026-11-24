@@ -84,7 +84,7 @@ def add_shape(
         return 1
 
     diagrams = mxfile.findall("diagram")
-    if diagram_index >= len(diagrams):
+    if diagram_index < 0 or diagram_index >= len(diagrams):
         print(
             f"ERROR: diagram-index {diagram_index} is out of range "
             f"(file has {len(diagrams)} diagram(s))"
