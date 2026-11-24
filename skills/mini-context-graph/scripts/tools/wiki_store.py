@@ -75,7 +75,7 @@ def _load_index() -> list[dict]:
     for line in _INDEX_FILE.read_text().splitlines():
         # Expected table row: | [[slug]] | category | summary | date |
         if line.startswith("| [["):
-            parts = [p.strip() for p in line.split("|") if p.strip()]
+            parts = [p.strip() for p in line.split("|")[1:-1]]
             if len(parts) >= 3:
                 link = parts[0]  # [[slug]]
                 category = parts[1] if len(parts) > 1 else ""
@@ -154,6 +154,7 @@ def write_page(
             if stripped and not stripped.startswith("#"):
                 summary = stripped[:100]
                 break
+    summary = re.sub(r"[\r\n|]+", " ", summary).strip()
 
     path.write_text(content)
 

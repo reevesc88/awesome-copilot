@@ -126,7 +126,9 @@
     const iso = duration.match(
       /^P(?:(\d+(?:\.\d+)?)D)?(?:T(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?)?$/i,
     );
-    if (!iso) return null;
+    if (!iso || iso.slice(1).every((part) => part === undefined) || /T$/i.test(duration)) {
+      return null;
+    }
     const [, days = "0", hours = "0", minutes = "0", seconds = "0"] = iso;
     return (
       Number(days) * 86_400_000 +

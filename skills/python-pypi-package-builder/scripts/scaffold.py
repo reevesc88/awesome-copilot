@@ -90,7 +90,6 @@ dependencies = [
     # List your runtime dependencies here. Keep them minimal.
     # Example: "httpx>=0.24", "pydantic>=2.0"
 ]
-]
 
 [project.optional-dependencies]
 redis = [
@@ -451,10 +450,10 @@ def test_client_raises_on_invalid_timeout() -> None:
 '''
 
 
-def gen_test_backends() -> str:
-    return '''\
+def gen_test_backends(mod: str) -> str:
+    return f'''\
 import pytest
-from your_package.backends.memory import MemoryBackend
+from {mod}.backends.memory import MemoryBackend
 
 
 @pytest.mark.asyncio
@@ -766,7 +765,7 @@ def scaffold(
     write(root / "tests" / "__init__.py", "")
     write(root / "tests" / "conftest.py", gen_conftest(name, mod))
     write(root / "tests" / "test_core.py", gen_test_core(mod))
-    write(root / "tests" / "test_backends.py", gen_test_backends())
+    write(root / "tests" / "test_backends.py", gen_test_backends(mod))
 
     # CI
     write(root / ".github" / "workflows" / "ci.yml", gen_ci_yml(name, mod))
