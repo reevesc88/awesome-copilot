@@ -112,14 +112,14 @@ test("flight-map-canvas capitals dataset, HostBridge, and RenderConfig merge/app
   });
   assert.equal(loadedCfg.map.loadRadius, 8);
   assert.equal(loadedCfg.map.tileSize, 100); // preserved from defaults
-  assert.equal( ({}).polluted, undefined); // prototype pollution blocked
+  assert.equal(vm.runInContext("Object.prototype.polluted", hostedCtx), undefined); // prototype pollution blocked
 
   // Blocked unsafe dot-paths leave Object.prototype untouched; valid set() updates globals & notifies listeners
   const notifications = [];
   hostedCtx.RenderConfig.onChange((keyPath, val) => notifications.push([keyPath, val]));
   hostedCtx.RenderConfig.set("__proto__.polluted", "bad");
   hostedCtx.RenderConfig.set("constructor.prototype.polluted", "bad");
-  assert.equal(({}).polluted, undefined);
+  assert.equal(vm.runInContext("Object.prototype.polluted", hostedCtx), undefined);
   assert.equal(notifications.length, 0);
 
   hostedCtx.RenderConfig.set("map.loadRadius", 10);
@@ -409,43 +409,46 @@ test("windows-app-storage-inspector docker-images, microsoft-scout, and cloud-fi
   }
   await cloudReader.close();
 
-  // 2. analyzeDockerImages when absent vs when docker.exe is stubbed on PATH
+  // 2. analyzeDockerImages when absent vs when docker.exe is stubbed on PATH (POSIX)
+  const savedPath = process.env.PATH ?? "";
   process.env.PATH = fakeBin;
   const emptyScan = { directories: [], largestFiles: [] };
   const missingDocker = await analyzeDockerImages(emptyScan);
   assert.equal(missingDocker.status, "not-found");
   assert.match(missingDocker.message, /Docker CLI was not found/);
 
-  const dockerDesktopDir = path.resolve(localAppData, "Docker");
-  const vhdxPath = path.join(dockerDesktopDir, "wsl", "ext4.vhdx");
-  fs.mkdirSync(path.dirname(vhdxPath), { recursive: true });
-  fs.writeFileSync(vhdxPath, "stub", "utf8");
+  if (process.platform !== "win32") {
+    const dockerDesktopDir = path.resolve(localAppData, "Docker");
+    const vhdxPath = path.join(dockerDesktopDir, "wsl", "ext4.vhdx");
+    fs.mkdirSync(path.dirname(vhdxPath), { recursive: true });
+    fs.writeFileSync(vhdxPath, "stub", "utf8");
 
-  fs.writeFileSync(
-    path.join(fakeBin, "docker.exe"),
-    `#!/bin/sh
+    fs.writeFileSync(
+      path.join(fakeBin, "docker.exe"),
+      `#!/bin/sh
 printf '%s\\n' '{"ID":"sha256:111","Repository":"node","Tag":"22-alpine","Size":"150MB","CreatedAt":"2026-03-01","Containers":"2"}'
 printf '%s\\n' '{"ID":"sha256:222","Repository":"<none>","Tag":"<none>","Size":"512KB","CreatedAt":"2026-02-01","Containers":"N/A"}'
 `,
-    { mode: 0o755 },
-  );
-  process.env.PATH = `${fakeBin}${path.delimiter}${savedEnv.PATH ?? ""}`;
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${fakeBin}${path.delimiter}${savedPath}`;
 
-  const dockerResult = await analyzeDockerImages({
-    directories: [{ path: dockerDesktopDir, bytes: 4096, files: 2 }],
-    largestFiles: [
-      { path: vhdxPath, bytes: 4096 },
-      { path: path.join(dir, "unrelated.bin"), bytes: 99999 },
-    ],
-  });
-  assert.equal(dockerResult.status, "available");
-  assert.equal(dockerResult.images.length, 2);
-  assert.equal(dockerResult.danglingImages, 1);
-  assert.equal(dockerResult.imageBytes, 150 * 1024 * 1024 + 512 * 1024);
-  assert.equal(dockerResult.images[0].containers, 2);
-  assert.equal(dockerResult.images[1].containers, undefined);
-  assert.equal(dockerResult.totalBytes, 4096);
-  assert.deepEqual(dockerResult.topFiles.map((f) => f.path), [vhdxPath]);
+    const dockerResult = await analyzeDockerImages({
+      directories: [{ path: dockerDesktopDir, bytes: 4096, files: 2 }],
+      largestFiles: [
+        { path: vhdxPath, bytes: 4096 },
+        { path: path.join(dir, "unrelated.bin"), bytes: 99999 },
+      ],
+    });
+    assert.equal(dockerResult.status, "available");
+    assert.equal(dockerResult.images.length, 2);
+    assert.equal(dockerResult.danglingImages, 1);
+    assert.equal(dockerResult.imageBytes, 150 * 1024 * 1024 + 512 * 1024);
+    assert.equal(dockerResult.images[0].containers, 2);
+    assert.equal(dockerResult.images[1].containers, undefined);
+    assert.equal(dockerResult.totalBytes, 4096);
+    assert.deepEqual(dockerResult.topFiles.map((f) => f.path), [vhdxPath]);
+  }
 
   // 3. analyzeMicrosoftScout when absent vs when .scout folders exist
   const missingScout = await analyzeMicrosoftScout(emptyScan);
@@ -475,4 +478,51 @@ printf '%s\\n' '{"ID":"sha256:222","Repository":"<none>","Tag":"<none>","Size":"
     assert.equal(scoutResult.status, "unsupported");
     assert.equal(scoutResult.cleanupItems.every((item) => item.cleanupEligible === false), true);
   }
+});
+
+test("windows-app-storage-inspector docker-images reports unavailable on Windows when Docker storage exists without a runnable CLI", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("Windows-only test");
+    return;
+  }
+
+  const dir = makeTempDir(t, "storage-inspector-win32-");
+  const localAppData = path.join(dir, "LocalAppData");
+  const programData = path.join(dir, "ProgramData");
+  const fakeBin = path.join(dir, "bin");
+  fs.mkdirSync(fakeBin, { recursive: true });
+
+  const savedEnv = { ...process.env };
+  t.after(() => {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in savedEnv)) delete process.env[key];
+    }
+    Object.assign(process.env, savedEnv);
+  });
+
+  process.env.LOCALAPPDATA = localAppData;
+  process.env.PROGRAMDATA = programData;
+  process.env.PATH = fakeBin;
+
+  const dockerDesktopDir = path.resolve(localAppData, "Docker");
+  const vhdxPath = path.join(dockerDesktopDir, "wsl", "ext4.vhdx");
+  fs.mkdirSync(path.dirname(vhdxPath), { recursive: true });
+  fs.writeFileSync(vhdxPath, "stub", "utf8");
+
+  const dockerResult = await analyzeDockerImages({
+    directories: [{ path: dockerDesktopDir, bytes: 4096, files: 2 }],
+    largestFiles: [
+      { path: vhdxPath, bytes: 4096 },
+      { path: path.join(dir, "unrelated.bin"), bytes: 99999 },
+    ],
+  });
+  assert.equal(dockerResult.status, "unavailable");
+  assert.equal(dockerResult.processCount, 0);
+  assert.deepEqual(dockerResult.images, []);
+  assert.equal(dockerResult.danglingImages, 0);
+  assert.equal(dockerResult.imageBytes, 0);
+  assert.equal(dockerResult.locations.length, 1);
+  assert.equal(dockerResult.totalBytes, 4096);
+  assert.deepEqual(dockerResult.topFiles.map((f) => f.path), [vhdxPath]);
+  assert.match(dockerResult.message, /Docker CLI was not found|Docker image inspection failed/);
 });
