@@ -324,6 +324,129 @@ print("OK")
     0,
   );
   assert.equal(JSON.parse(fs.readFileSync(diagramPath, "utf8")).elements.length, 3);
+  fs.rmSync(`${diagramPath}.edit`, { force: true });
+
+  // 3. Atomic write & recovery guarantees: partial json.dump failure, post-write rename failure + retry, post-commit cleanup warning, and no-replace recovery
+  const integrityCheck = runPy([
+    "-c",
+    `
+import importlib.util, io, json, os, pathlib, sys
+from contextlib import redirect_stdout, redirect_stderr
+
+add_icon_py = ${JSON.stringify(addIconPy)}
+diagram_file = pathlib.Path(${JSON.stringify(diagramPath)})
+lib_dir = ${JSON.stringify(libDir)}
+
+spec = importlib.util.spec_from_file_location("add_icon_integrity", add_icon_py)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+def invoke_main(extra_args=()):
+    saved_argv = sys.argv[:]
+    out_buf, err_buf = io.StringIO(), io.StringIO()
+    exit_code = 0
+    sys.argv = [add_icon_py, str(diagram_file), "ComputeNode", "80", "90", "--library-path", lib_dir, *extra_args]
+    try:
+        with redirect_stdout(out_buf), redirect_stderr(err_buf):
+            mod.main()
+    except SystemExit as exc:
+        exit_code = exc.code if isinstance(exc.code, int) else 1
+    finally:
+        sys.argv = saved_argv
+    return exit_code, out_buf.getvalue(), err_buf.getvalue()
+
+baseline_raw = diagram_file.read_text(encoding="utf-8")
+baseline_count = len(json.loads(baseline_raw)["elements"])
+assert baseline_count == 3
+
+# 3a. Partial write failure in json.dump preserves original diagram (both --use-edit-suffix and --no-use-edit-suffix) and leaves no temp files
+real_json_dump = mod.json.dump
+def truncated_dump(_obj, fp, **_kwargs):
+    fp.write('{"truncated": ')
+    fp.flush()
+    raise OSError("simulated disk full mid-dump")
+
+mod.json.dump = truncated_dump
+try:
+    code_edit, _, _ = invoke_main()
+    assert code_edit == 1
+    assert diagram_file.read_text(encoding="utf-8") == baseline_raw
+    assert not pathlib.Path(str(diagram_file) + ".edit").exists()
+
+    code_direct, _, _ = invoke_main(["--no-use-edit-suffix"])
+    assert code_direct == 1
+    assert diagram_file.read_text(encoding="utf-8") == baseline_raw
+    leftover_tmps = [p.name for p in diagram_file.parent.iterdir() if p.name.endswith(".tmp") or p.name.endswith(".staged")]
+    assert leftover_tmps == [], f"unexpected temp files: {leftover_tmps}"
+finally:
+    mod.json.dump = real_json_dump
+
+# 3b. Failure during final promotion after staged write preserves original so retry adds the icon only once
+real_os_replace = mod.os.replace
+def fail_final_promotion(src, dst):
+    if pathlib.Path(dst) == diagram_file:
+        raise OSError("transient final rename failure")
+    return real_os_replace(src, dst)
+
+mod.os.replace = fail_final_promotion
+try:
+    code_transient, _, _ = invoke_main()
+    assert code_transient == 1
+    assert diagram_file.read_text(encoding="utf-8") == baseline_raw
+    assert not pathlib.Path(str(diagram_file) + ".edit").exists()
+    leftover_staged = [p.name for p in diagram_file.parent.iterdir() if p.name.endswith(".tmp") or p.name.endswith(".staged")]
+    assert leftover_staged == [], f"unexpected staged files: {leftover_staged}"
+finally:
+    mod.os.replace = real_os_replace
+
+code_retry, _, _ = invoke_main()
+assert code_retry == 0
+after_retry_count = len(json.loads(diagram_file.read_text(encoding="utf-8"))["elements"])
+assert after_retry_count == baseline_count + 1, f"expected {baseline_count + 1}, got {after_retry_count}"
+
+# 3c. Post-commit cleanup failure on .edit does not report failure after insertion is already committed
+real_unlink = pathlib.Path.unlink
+edit_file = pathlib.Path(str(diagram_file) + ".edit")
+def fail_edit_cleanup(self, *args, **kwargs):
+    if self == edit_file:
+        raise PermissionError("busy .edit cleanup")
+    return real_unlink(self, *args, **kwargs)
+
+pathlib.Path.unlink = fail_edit_cleanup
+try:
+    code_cleanup_warn, _, err_cleanup = invoke_main()
+    assert code_cleanup_warn == 0, f"expected exit 0 after commit, got {code_cleanup_warn}: {err_cleanup}"
+    assert "Warning:" in err_cleanup
+finally:
+    pathlib.Path.unlink = real_unlink
+    if edit_file.exists():
+        edit_file.unlink()
+assert len(json.loads(diagram_file.read_text(encoding="utf-8"))["elements"]) == baseline_count + 2
+
+# 3d. Recovery uses no-replace semantics if final_path was recreated concurrently before rollback
+pre_concurrent_raw = diagram_file.read_text(encoding="utf-8")
+real_load_icon = mod.load_icon
+def concurrent_recreate_then_fail(_icon_name, _lib_path):
+    diagram_file.write_text('{"type": "excalidraw", "concurrent": true}', encoding="utf-8")
+    raise RuntimeError("icon failure after concurrent recreate")
+
+mod.load_icon = concurrent_recreate_then_fail
+try:
+    code_concurrent, _, _ = invoke_main()
+    assert code_concurrent == 1
+    assert json.loads(diagram_file.read_text(encoding="utf-8")).get("concurrent") is True
+    assert edit_file.exists()
+    assert edit_file.read_text(encoding="utf-8") == pre_concurrent_raw
+finally:
+    mod.load_icon = real_load_icon
+    edit_file.unlink(missing_ok=True)
+    diagram_file.write_text(pre_concurrent_raw, encoding="utf-8")
+
+print("OK")
+`,
+  ]);
+  assert.equal(integrityCheck.status, 0, integrityCheck.stdout + integrityCheck.stderr);
+  assert.equal(integrityCheck.stdout.trim(), "OK");
 });
 
 test("eval-driven-dev verify_step6_completion validates complete pixie result trees and reports every artifact/JSONL failure offline", (t) => {

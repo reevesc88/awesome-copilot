@@ -328,8 +328,12 @@ printf '{"ok":true}\\n'
   );
 
   const remoteBaseHref = `${pathToFileURL(path.join(dir, "remotes")).href}/`;
+  const emptyGitConfig = path.join(dir, "empty-gitconfig");
+  fs.writeFileSync(emptyGitConfig, "", "utf8");
   const publishEnv = {
     ...envWithStubGh,
+    GIT_CONFIG_GLOBAL: emptyGitConfig,
+    GIT_CONFIG_SYSTEM: emptyGitConfig,
     GIT_AUTHOR_NAME: "Test Publisher",
     GIT_AUTHOR_EMAIL: "publisher@example.com",
     GIT_COMMITTER_NAME: "Test Publisher",

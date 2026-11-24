@@ -346,18 +346,44 @@ test("webmcpify runtime manages tool scopes, rollback on sync/async/unmount race
 });
 
 test("webapp-testing test-helper polls async conditions, records console logs, and names screenshots deterministically", async () => {
-  let checks = 0;
-  const ok = await waitForCondition(async () => {
-    checks += 1;
-    return checks >= 2;
-  }, 500, 5);
-  assert.equal(ok, true);
-  assert.equal(checks, 2);
+  const origDateNow = Date.now;
+  const origSetTimeout = globalThis.setTimeout;
+  let fakeNow = 1_000_000;
+  const scheduledDelays = [];
+  Date.now = () => fakeNow;
+  globalThis.setTimeout = (cb, ms = 0, ...args) => {
+    const stepMs = Number(ms);
+    scheduledDelays.push(stepMs);
+    fakeNow += stepMs;
+    queueMicrotask(() => cb(...args));
+    return scheduledDelays.length;
+  };
+  try {
+    let checks = 0;
+    const ok = await waitForCondition(async () => {
+      checks += 1;
+      return checks >= 2;
+    }, 500, 5);
+    assert.equal(ok, true);
+    assert.equal(checks, 2);
+    assert.deepEqual(scheduledDelays, [5]);
 
-  await assert.rejects(
-    () => waitForCondition(() => false, 20, 5),
-    /Condition not met within timeout/,
-  );
+    scheduledDelays.length = 0;
+    let timeoutChecks = 0;
+    await assert.rejects(
+      () =>
+        waitForCondition(() => {
+          timeoutChecks += 1;
+          return false;
+        }, 20, 5),
+      /Condition not met within timeout/,
+    );
+    assert.equal(timeoutChecks, 4);
+    assert.deepEqual(scheduledDelays, [5, 5, 5, 5]);
+  } finally {
+    Date.now = origDateNow;
+    globalThis.setTimeout = origSetTimeout;
+  }
 
   const handlers = new Map();
   const shots = [];

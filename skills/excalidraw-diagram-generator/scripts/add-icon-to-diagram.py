@@ -23,7 +23,9 @@ Examples:
 
 import copy
 import json
+import os
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
@@ -206,15 +208,69 @@ def prepare_edit_path(diagram_path: Path, use_edit_suffix: bool) -> tuple[Path, 
     return edit_path, diagram_path
 
 
-def finalize_edit_path(work_path: Path, final_path: Path | None) -> None:
-    """Finalize edit by renaming .edit back to .excalidraw if needed."""
+def finalize_edit_path(
+    work_path: Path,
+    final_path: Path | None,
+    staged_path: Path | None = None,
+) -> None:
+    """Finalize edit by atomically promoting staged/work file to .excalidraw if needed."""
     if final_path is None:
         return
 
-    if final_path.exists():
-        final_path.unlink()
+    source_path = staged_path if staged_path is not None else work_path
+    os.replace(source_path, final_path)
 
-    work_path.rename(final_path)
+    if staged_path is not None and work_path != final_path:
+        try:
+            work_path.unlink(missing_ok=True)
+        except OSError as cleanup_err:
+            print(
+                f"Warning: Could not remove temporary edit file {work_path}: {cleanup_err}",
+                file=sys.stderr,
+            )
+
+
+def restore_edit_path(work_path: Path, final_path: Path) -> None:
+    """Restore original .edit file to final_path without replacing an existing file."""
+    if not work_path.exists():
+        return
+
+    try:
+        if os.name == "nt":
+            os.rename(work_path, final_path)
+        else:
+            os.link(work_path, final_path)
+            work_path.unlink()
+    except FileExistsError:
+        return
+    except OSError:
+        return
+
+
+def write_diagram_atomic(diagram: Dict[str, Any], target_path: Path) -> None:
+    """Write diagram JSON to a temporary file and atomically replace target_path."""
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='w',
+            encoding='utf-8',
+            dir=target_path.parent,
+            prefix=f".{target_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp_file:
+            temp_path = Path(tmp_file.name)
+            json.dump(diagram, tmp_file, indent=2, ensure_ascii=False)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+        os.replace(temp_path, target_path)
+    except BaseException:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
 
 
 def create_text_label(text: str, x: float, y: float) -> Dict[str, Any]:
@@ -274,18 +330,20 @@ def add_icon_to_diagram(
     x: float,
     y: float,
     library_path: Path,
-    label: str = None
+    label: str = None,
+    output_path: Path | None = None,
 ) -> None:
     """
     Add an icon to an Excalidraw diagram.
     
     Args:
-        diagram_path: Path to the Excalidraw diagram file
+        diagram_path: Path to the Excalidraw diagram file to read
         icon_name: Name of the icon to add
         x: Target X coordinate
         y: Target Y coordinate
         library_path: Path to the icon library directory
         label: Optional text label to add below the icon
+        output_path: Optional path to write the updated diagram (defaults to diagram_path)
     """
     # Load icon elements
     print(f"Loading icon: {icon_name}")
@@ -323,10 +381,10 @@ def add_icon_to_diagram(
     diagram['elements'].extend(transformed_elements)
     print(f"  Added {len(transformed_elements)} elements (total: {original_count} -> {len(diagram['elements'])})")
     
-    # Save diagram
+    # Save diagram atomically via temporary file so partial writes never corrupt the original
+    destination_path = output_path if output_path is not None else diagram_path
     print(f"Saving diagram")
-    with open(diagram_path, 'w', encoding='utf-8') as f:
-        json.dump(diagram, f, indent=2, ensure_ascii=False)
+    write_diagram_atomic(diagram, destination_path)
     
     print(f"✓ Successfully added '{icon_name}' icon to diagram")
 
@@ -399,13 +457,26 @@ def main():
     
     work_path = None
     final_path = None
+    staged_path = None
     try:
         work_path, final_path = prepare_edit_path(diagram_path, use_edit_suffix)
-        add_icon_to_diagram(work_path, icon_name, x, y, library_path, label)
-        finalize_edit_path(work_path, final_path)
+        if final_path is not None:
+            staged_path = final_path.with_name(f".{final_path.name}.{uuid.uuid4().hex}.staged")
+            add_icon_to_diagram(
+                work_path, icon_name, x, y, library_path, label, output_path=staged_path
+            )
+            finalize_edit_path(work_path, final_path, staged_path=staged_path)
+        else:
+            add_icon_to_diagram(work_path, icon_name, x, y, library_path, label)
+            finalize_edit_path(work_path, final_path)
     except Exception as e:
-        if final_path is not None and work_path is not None and work_path.exists() and not final_path.exists():
-            work_path.rename(final_path)
+        if staged_path is not None:
+            try:
+                staged_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if final_path is not None and work_path is not None:
+            restore_edit_path(work_path, final_path)
         print(f"Error: {e}")
         sys.exit(1)
 
