@@ -671,20 +671,20 @@ test("pr-artifact-explorer TrxPreview parses TRX XML, durations, nested results,
   assert.deepEqual({ ...parsed.summaryCounts }, { total: 4, passed: 1, failed: 1, skipped: 1 });
   assert.equal(parsed.results.length, 4);
 
-  const [passRes, failRes, barePRes, barePtRes] = parsed.results;
-  assert.equal(passRes.className, "App.AuthTests");
-  assert.equal(passRes.testListName, "All Loaded Results");
-  assert.equal(passRes.durationMs, 250);
+  const [passedItem, failedItem, barePItem, barePtItem] = parsed.results;
+  assert.equal(passedItem.className, "App.AuthTests");
+  assert.equal(passedItem.testListName, "All Loaded Results");
+  assert.equal(passedItem.durationMs, 250);
 
-  assert.equal(failRes.category, "failed");
-  assert.equal(failRes.durationMs, 90_500);
-  assert.equal(failRes.message, "Expected 401 <Unauthorized>");
-  assert.deepEqual([...failRes.resultFiles], ["logs/failure.txt"]);
+  assert.equal(failedItem.category, "failed");
+  assert.equal(failedItem.durationMs, 90_500);
+  assert.equal(failedItem.message, "Expected 401 <Unauthorized>");
+  assert.deepEqual([...failedItem.resultFiles], ["logs/failure.txt"]);
 
   // Nested InnerResults carry depth=1 and invalid bare ISO "P" / "PT" durations resolve to null (not 0ms)
-  assert.equal(barePRes.depth, 1);
-  assert.equal(barePRes.category, "skipped");
-  assert.equal(barePRes.durationMs, null);
-  assert.equal(barePtRes.category, "other");
-  assert.equal(barePtRes.durationMs, null);
+  assert.equal(barePItem.depth, 1);
+  assert.equal(barePItem.category, "skipped");
+  assert.equal(barePItem.durationMs, null);
+  assert.equal(barePtItem.category, "other");
+  assert.equal(barePtItem.durationMs, null);
 });
