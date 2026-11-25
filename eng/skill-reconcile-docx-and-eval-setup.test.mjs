@@ -21,6 +21,8 @@ const PYTHON_INFO = (() => {
   const probe = spawnSync(
     "python3",
     [
+      "-I",
+      "-S",
       "-c",
       "import json, sys; print(json.dumps({'executable': sys.executable, 'version': list(sys.version_info[:3])}))",
     ],
@@ -50,7 +52,7 @@ function ensurePython(t, minMajor = 3, minMinor = 10) {
 }
 
 function runPy(args, { cwd, env = {}, input } = {}) {
-  return spawnSync(PYTHON_INFO?.executable ?? "python3", ["-B", "-E", ...args], {
+  return spawnSync(PYTHON_INFO?.executable ?? "python3", ["-I", "-S", "-B", ...args], {
     cwd,
     env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", ...env },
     input,
@@ -90,8 +92,8 @@ function buildMinimalPng(width, height) {
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8; // bit depth
   ihdr[9] = 2; // RGB
-  const rawScanline = Buffer.alloc(1 + 3);
-  const idat = deflateSync(rawScanline);
+  const rawScanlines = Buffer.alloc(height * (1 + 3 * width));
+  const idat = deflateSync(rawScanlines);
   return Buffer.concat([
     signature,
     chunk("IHDR", ihdr),
@@ -953,7 +955,6 @@ exit 0
     spawnSync("bash", [setupSh], {
       cwd,
       env: {
-        ...process.env,
         PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         EDD_LOG: logFile,
         ...extraEnv,

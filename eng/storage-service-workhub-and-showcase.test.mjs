@@ -133,6 +133,7 @@ test("storage-inspector StorageService enforces safety acknowledgements, scan/cl
 
   let scanBehavior = "success";
   let scanCalls = 0;
+  let executeCleanupCalls = 0;
   const fakeScanResult = {
     generatedAt: "2026-04-01T00:00:00Z",
     roots: [{ id: "profile", label: "User profile", path: profileDir }],
@@ -202,6 +203,7 @@ test("storage-inspector StorageService enforces safety acknowledgements, scan/cl
       };
     },
     executeCleanupPreview: async ({ onProgress }) => {
+      executeCleanupCalls += 1;
       onProgress({ phase: "recycling", completed: 1 });
       return {
         reclaimedBytes: 1024,
@@ -288,6 +290,7 @@ test("storage-inspector StorageService enforces safety acknowledgements, scan/cl
   // Force post-cleanup rescan to throw synchronously (missing USERPROFILE) so rescanError is captured without losing cleanup result
   process.env.USERPROFILE = "";
   const execOutcome = await svc.executeCleanup(preview.id, true);
+  assert.equal(executeCleanupCalls, 1);
   assert.equal(execOutcome.reclaimedBytes, 1024);
   assert.equal(execOutcome.rescanStarted, false);
   assert.equal(execOutcome.rescanError.code, "scan_roots_unavailable");
@@ -297,6 +300,7 @@ test("storage-inspector StorageService enforces safety acknowledgements, scan/cl
   await assert.rejects(() => svc.executeCleanup(preview.id, true), {
     code: "cleanup_preview_unknown",
   });
+  assert.equal(executeCleanupCalls, 1);
 
   // Analyzer cleanup re-verifies eligibility before execution (vscode-insiders folders branch)
   let folderEligible = true;
@@ -320,6 +324,7 @@ test("storage-inspector StorageService enforces safety acknowledgements, scan/cl
   await assert.rejects(() => svc.executeCleanup(analyzerPreview.id, true), {
     code: "cleanup_candidate_changed",
   });
+  assert.equal(executeCleanupCalls, 1);
   assert.equal(svc.getState().cleanup.status, "failed");
   assert.equal(svc.getState().cleanup.error.code, "cleanup_candidate_changed");
 
@@ -451,124 +456,68 @@ test("storage-inspector startCanvasServer enforces host/token auth, body size li
 });
 
 test("work-hub config, SQLite/RPC session inventory, repo status ladder, focus scoring, and recommendations work offline", (t) => {
+  const SQLITE_SKIP_STATUS = 42;
   const probeSqlite = spawnSync(
     process.execPath,
-    ["-e", 'import("node:sqlite").then(() => process.exit(0)).catch(() => process.exit(2))'],
-    { timeout: SUBPROCESS_TIMEOUT_MS },
+    [
+      "-e",
+      `import("node:sqlite").then(() => process.exit(0), (err) => {
+        if (err && (err.code === "ERR_UNKNOWN_BUILTIN_MODULE" || err.code === "MODULE_NOT_FOUND")) {
+          process.exit(${SQLITE_SKIP_STATUS});
+        }
+        console.error(err);
+        process.exit(1);
+      })`,
+    ],
+    { encoding: "utf8", timeout: SUBPROCESS_TIMEOUT_MS },
   );
-  if (probeSqlite.status !== 0) {
+  if (probeSqlite.status === SQLITE_SKIP_STATUS && !probeSqlite.error && !probeSqlite.signal) {
     t.skip("node:sqlite is not available in this Node.js runtime");
     return;
   }
+  assert.equal(
+    probeSqlite.error ?? null,
+    null,
+    `node:sqlite probe spawn error: ${probeSqlite.error?.message ?? ""}\nstderr:\n${probeSqlite.stderr ?? ""}`,
+  );
+  assert.equal(
+    probeSqlite.signal,
+    null,
+    `node:sqlite probe terminated by signal ${probeSqlite.signal}\nstderr:\n${probeSqlite.stderr ?? ""}`,
+  );
+  assert.equal(
+    probeSqlite.status,
+    0,
+    `node:sqlite probe failed with status ${probeSqlite.status}\nstderr:\n${probeSqlite.stderr ?? ""}\nstdout:\n${probeSqlite.stdout ?? ""}`,
+  );
 
   const fakeHome = makeTempDir(t, "wh-home-");
-  const fakeBin = makeTempDir(t, "wh-bin-");
+  const localHooksDir = path.join(fakeHome, "empty-git-hooks");
 
   // Create a real local git repository under ~/Projects/alpha-app so guessLocalPath + listLocalProjects + getLocalGitState run offline
   const localRepoDir = path.join(fakeHome, "Projects", "alpha-app");
   fs.mkdirSync(localRepoDir, { recursive: true });
+  fs.mkdirSync(localHooksDir, { recursive: true });
   for (const gitArgs of [
     ["init", "-q"],
     ["config", "user.name", "Test User"],
     ["config", "user.email", "test@example.com"],
     ["config", "commit.gpgSign", "false"],
+    ["config", "core.hooksPath", localHooksDir],
     ["remote", "add", "origin", "git@github.com:octo/alpha-app.git"],
   ]) {
-    assert.equal(spawnSync("git", gitArgs, { cwd: localRepoDir }).status, 0);
+    const gitSetup = spawnSync("git", gitArgs, { cwd: localRepoDir, encoding: "utf8" });
+    assert.equal(gitSetup.status, 0, gitSetup.stderr);
   }
   fs.writeFileSync(path.join(localRepoDir, "README.md"), "# Alpha\n", "utf8");
-  assert.equal(spawnSync("git", ["add", "README.md"], { cwd: localRepoDir }).status, 0);
-  assert.equal(spawnSync("git", ["commit", "-q", "-m", "init"], { cwd: localRepoDir }).status, 0);
+  const gitAdd = spawnSync("git", ["add", "README.md"], { cwd: localRepoDir, encoding: "utf8" });
+  assert.equal(gitAdd.status, 0, gitAdd.stderr);
+  const gitCommit = spawnSync("git", ["commit", "-q", "-m", "init"], {
+    cwd: localRepoDir,
+    encoding: "utf8",
+  });
+  assert.equal(gitCommit.status, 0, gitCommit.stderr);
   fs.writeFileSync(path.join(localRepoDir, "README.md"), "# Alpha dirty\n", "utf8"); // dirty tracked file
-
-  // Cross-platform gh CLI stub (works on POSIX and Windows)
-  const ghMockScript = path.join(fakeBin, "gh-mock.mjs");
-  fs.writeFileSync(
-    ghMockScript,
-    `
-const args = process.argv.slice(2);
-const nowIso = new Date().toISOString();
-const oldIso = "2024-01-10T00:00:00Z";
-
-if (args[0] === "api" && args[1] === "user") {
-  process.stdout.write(JSON.stringify({ login: "james" }));
-} else if (args[0] === "repo" && args[1] === "list") {
-  const owner = args[2];
-  const rows =
-    owner === "octo"
-      ? [{ nameWithOwner: "octo/alpha-app", description: "Alpha", pushedAt: nowIso, stargazerCount: 12 }]
-      : [{ nameWithOwner: "james/notes", description: "Notes", pushedAt: oldIso, stargazerCount: 1 }];
-  process.stdout.write(JSON.stringify(rows));
-} else if (args[0] === "api" && args[1] === "repos/octo/alpha-app") {
-  process.stdout.write(JSON.stringify({
-    html_url: "https://github.com/octo/alpha-app",
-    description: "Alpha service",
-    default_branch: "main",
-    archived: false,
-    private: false,
-    language: "TypeScript",
-    stargazers_count: 12,
-    pushed_at: nowIso,
-  }));
-} else if (args[0] === "api" && args[1] === "repos/octo/alpha-app/releases/latest") {
-  process.stderr.write("HTTP 404: Not Found");
-  process.exit(1);
-} else if (args[0] === "api" && args[1] === "repos/octo/alpha-app/tags?per_page=1") {
-  process.stdout.write(JSON.stringify([{ name: "v0.1.0", commit: { committer: { date: oldIso } } }]));
-} else if (args[0] === "pr" && args[1] === "list") {
-  process.stdout.write(JSON.stringify([
-    {
-      number: 14,
-      title: "Fix memory leak",
-      author: { login: "contributor" },
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      isDraft: false,
-      reviewDecision: "REVIEW_REQUIRED",
-      assignees: [{ login: "james" }],
-      statusCheckRollup: [{ conclusion: "FAILURE" }],
-      labels: [{ name: "bug" }],
-      headRefName: "fix/leak",
-      baseRefName: "main",
-    },
-  ]));
-} else if (args[0] === "issue" && args[1] === "list") {
-  process.stdout.write(JSON.stringify([
-    {
-      number: 22,
-      title: "Add export endpoint",
-      author: { login: "customer" },
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      assignees: [{ login: "james" }],
-      labels: [{ name: "enhancement" }],
-      comments: 4,
-    },
-  ]));
-} else if (args[0] === "api" && args[1] === "repos/octo/alpha-app/deployments?per_page=30") {
-  process.stdout.write(JSON.stringify([
-    { id: 901, environment: "production", ref: "main", created_at: nowIso, production_environment: true },
-  ]));
-} else if (args[0] === "api" && args[1] === "repos/octo/alpha-app/deployments/901/statuses?per_page=1") {
-  process.stdout.write(JSON.stringify([{ state: "failure", environment_url: "https://alpha.example.com" }]));
-} else if (args[0] === "api" && args.includes("requested_reviewers")) {
-  process.stdout.write("{}");
-} else {
-  process.stdout.write("Done\\n");
-}
-`,
-    "utf8",
-  );
-  fs.writeFileSync(
-    path.join(fakeBin, "gh"),
-    `#!/bin/sh\nexec "${process.execPath}" "${ghMockScript}" "$@"\n`,
-    { mode: 0o755 },
-  );
-  fs.writeFileSync(
-    path.join(fakeBin, "gh.cmd"),
-    `@echo off\r\n"${process.execPath}" "${ghMockScript}" %*\r\n`,
-    "utf8",
-  );
 
   const dataModuleUrl = pathToFileURL(
     path.join(ROOT_FOLDER, "extensions", "work-hub", "data.mjs"),
@@ -579,10 +528,204 @@ if (args[0] === "api" && args[1] === "user") {
 
   const childDriver = `
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+
+// Intercept execFile("gh", ...) in-process before loading work-hub so it can never fall through to a real GitHub CLI on any OS
+const realExecFile = childProcess.execFile;
+const ghCalls = [];
+
+function argsEqual(actual, expected) {
+  return actual.length === expected.length && actual.every((val, idx) => val === expected[idx]);
+}
+
+function handleFakeGh(args) {
+  ghCalls.push(args);
+  const nowIso = new Date().toISOString();
+  const oldIso = "2024-01-10T00:00:00Z";
+
+  if (argsEqual(args, ["api", "user"])) {
+    return { code: 0, stdout: JSON.stringify({ login: "james" }), stderr: "" };
+  }
+  if (
+    args[0] === "repo" &&
+    args[1] === "list" &&
+    (args[2] === "octo" || args[2] === "james") &&
+    argsEqual(args.slice(3), [
+      "--limit",
+      "100",
+      "--json",
+      "nameWithOwner,description,pushedAt,isArchived,isPrivate,isFork,stargazerCount",
+    ])
+  ) {
+    const rows =
+      args[2] === "octo"
+        ? [{ nameWithOwner: "octo/alpha-app", description: "Alpha", pushedAt: nowIso, stargazerCount: 12 }]
+        : [{ nameWithOwner: "james/notes", description: "Notes", pushedAt: oldIso, stargazerCount: 1 }];
+    return { code: 0, stdout: JSON.stringify(rows), stderr: "" };
+  }
+  if (argsEqual(args, ["api", "repos/octo/alpha-app"])) {
+    return {
+      code: 0,
+      stdout: JSON.stringify({
+        html_url: "https://github.com/octo/alpha-app",
+        description: "Alpha service",
+        default_branch: "main",
+        archived: false,
+        private: false,
+        language: "TypeScript",
+        stargazers_count: 12,
+        pushed_at: nowIso,
+      }),
+      stderr: "",
+    };
+  }
+  if (argsEqual(args, ["api", "repos/octo/alpha-app/releases/latest"])) {
+    return { code: 1, stdout: "", stderr: "HTTP 404: Not Found" };
+  }
+  if (argsEqual(args, ["api", "repos/octo/alpha-app/tags?per_page=1"])) {
+    return {
+      code: 0,
+      stdout: JSON.stringify([{ name: "v0.1.0", commit: { committer: { date: oldIso } } }]),
+      stderr: "",
+    };
+  }
+  if (
+    argsEqual(args, [
+      "pr",
+      "list",
+      "--repo",
+      "octo/alpha-app",
+      "--state",
+      "open",
+      "--limit",
+      "50",
+      "--json",
+      "number,title,author,updatedAt,createdAt,isDraft,reviewDecision,url,headRefName,baseRefName,statusCheckRollup,labels,assignees",
+    ])
+  ) {
+    return {
+      code: 0,
+      stdout: JSON.stringify([
+        {
+          number: 14,
+          title: "Fix memory leak",
+          author: { login: "contributor" },
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          isDraft: false,
+          reviewDecision: "REVIEW_REQUIRED",
+          assignees: [{ login: "james" }],
+          statusCheckRollup: [{ conclusion: "FAILURE" }],
+          labels: [{ name: "bug" }],
+          headRefName: "fix/leak",
+          baseRefName: "main",
+        },
+      ]),
+      stderr: "",
+    };
+  }
+  if (
+    argsEqual(args, [
+      "issue",
+      "list",
+      "--repo",
+      "octo/alpha-app",
+      "--state",
+      "open",
+      "--limit",
+      "50",
+      "--json",
+      "number,title,author,updatedAt,createdAt,url,labels,assignees,comments",
+    ])
+  ) {
+    return {
+      code: 0,
+      stdout: JSON.stringify([
+        {
+          number: 22,
+          title: "Add export endpoint",
+          author: { login: "customer" },
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          assignees: [{ login: "james" }],
+          labels: [{ name: "enhancement" }],
+          comments: 4,
+        },
+      ]),
+      stderr: "",
+    };
+  }
+  if (argsEqual(args, ["api", "repos/octo/alpha-app/deployments?per_page=30"])) {
+    return {
+      code: 0,
+      stdout: JSON.stringify([
+        { id: 901, environment: "production", ref: "main", created_at: nowIso, production_environment: true },
+      ]),
+      stderr: "",
+    };
+  }
+  if (argsEqual(args, ["api", "repos/octo/alpha-app/deployments/901/statuses?per_page=1"])) {
+    return {
+      code: 0,
+      stdout: JSON.stringify([{ state: "failure", environment_url: "https://alpha.example.com" }]),
+      stderr: "",
+    };
+  }
+  if (
+    argsEqual(args, [
+      "api",
+      "--method",
+      "POST",
+      "repos/octo/alpha-app/pulls/14/requested_reviewers",
+      "-f",
+      "reviewers[]=copilot-pull-request-reviewer[bot]",
+    ])
+  ) {
+    return { code: 0, stdout: "{}", stderr: "" };
+  }
+  if (argsEqual(args, ["pr", "review", "14", "--repo", "octo/alpha-app", "--approve"])) {
+    return { code: 0, stdout: "Approved PR #14\\n", stderr: "" };
+  }
+  return { code: 1, stdout: "", stderr: \`Unexpected gh args: \${JSON.stringify(args)}\` };
+}
+
+childProcess.execFile = function patchedExecFile(file, args, options, callback) {
+  let opts = options;
+  let cb = callback;
+  if (typeof opts === "function") {
+    cb = opts;
+    opts = {};
+  }
+  const normalizedArgs = Array.isArray(args) ? args : [];
+  if (file === "gh") {
+    queueMicrotask(() => {
+      const outcome = handleFakeGh(normalizedArgs);
+      if (outcome.code === 0) {
+        cb?.(null, outcome.stdout, outcome.stderr);
+        return;
+      }
+      const err = Object.assign(new Error(outcome.stderr || \`gh exited \${outcome.code}\`), {
+        code: outcome.code,
+      });
+      cb?.(err, outcome.stdout, outcome.stderr);
+    });
+    return { kill() {} };
+  }
+  if (file !== "git") {
+    queueMicrotask(() => {
+      const err = Object.assign(new Error(\`Unexpected external command: \${file}\`), { code: "ENOENT" });
+      cb?.(err, "", err.message);
+    });
+    return { kill() {} };
+  }
+  return realExecFile.call(this, file, normalizedArgs, opts, cb);
+};
+syncBuiltinESMExports();
 
 const workHub = await import(${JSON.stringify(dataModuleUrl)});
 const { renderHtml } = await import(${JSON.stringify(rendererModuleUrl)});
@@ -685,6 +828,7 @@ assert.equal(rpcDashboard.sessionInventory.length, 1);
 assert.equal(rpcDashboard.sessionInventory[0].id, "rpc-local");
 
 // 5. Copilot review & approve item actions + renderer output
+const callsBeforeActions = ghCalls.length;
 const reviewAction = await workHub.runItemAction({
   repo: "octo/alpha-app",
   type: "pr",
@@ -699,6 +843,27 @@ const approveAction = await workHub.runItemAction({
   action: "approve",
 });
 assert.equal(approveAction.ok, true);
+assert.deepEqual(ghCalls.slice(callsBeforeActions), [
+  [
+    "api",
+    "--method",
+    "POST",
+    "repos/octo/alpha-app/pulls/14/requested_reviewers",
+    "-f",
+    "reviewers[]=copilot-pull-request-reviewer[bot]",
+  ],
+  ["pr", "review", "14", "--repo", "octo/alpha-app", "--approve"],
+]);
+await assert.rejects(
+  () =>
+    workHub.runItemAction({
+      repo: "octo/alpha-app",
+      type: "pr",
+      number: 999,
+      action: "approve",
+    }),
+  /Unexpected gh args/,
+);
 assert.equal(renderHtml().includes("<title>Work Hub</title>"), true);
 console.log("WORK_HUB_OK");
 `;
@@ -708,7 +873,6 @@ console.log("WORK_HUB_OK");
       ...process.env,
       HOME: fakeHome,
       USERPROFILE: fakeHome,
-      PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
     },
     encoding: "utf8",
     timeout: SUBPROCESS_TIMEOUT_MS,
@@ -748,19 +912,21 @@ test("release-notes-showcase canvas normalizes release stories, classifies git t
 
   // Create a real local git repository with remote origin, two tags, and unreleased commits
   const repoDir = makeTempDir(t, "rn-git-repo-");
+  const repoHooksDir = makeTempDir(t, "rn-git-hooks-");
   const runGitInit = (args, extraEnv = {}) => {
-    const res = spawnSync("git", args, {
+    const gitOutcome = spawnSync("git", args, {
       cwd: repoDir,
       env: { ...process.env, ...extraEnv },
       encoding: "utf8",
     });
-    assert.equal(res.status, 0, res.stderr);
+    assert.equal(gitOutcome.status, 0, gitOutcome.stderr);
   };
   runGitInit(["init", "-q"]);
   runGitInit(["config", "user.name", "Ada Lovelace"]);
   runGitInit(["config", "user.email", "ada@example.com"]);
   runGitInit(["config", "commit.gpgSign", "false"]);
   runGitInit(["config", "tag.gpgSign", "false"]);
+  runGitInit(["config", "core.hooksPath", repoHooksDir]);
   runGitInit(["remote", "add", "origin", "https://github.com/octo-org/rocket-kit.git"]);
 
   fs.writeFileSync(path.join(repoDir, "a.txt"), "v1\n", "utf8");
