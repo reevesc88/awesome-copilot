@@ -13,6 +13,68 @@ import { StorageService } from "../extensions/windows-app-storage-inspector-clea
 import { ROOT_FOLDER } from "./constants.mjs";
 
 const SUBPROCESS_TIMEOUT_MS = 15_000;
+const SQLITE_EXEC_FLAGS = process.execArgv.filter(
+  (arg) => arg === "--experimental-sqlite" || arg === "--no-experimental-sqlite",
+);
+
+const LOCAL_GIT_ENV_VARS = new Set([
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_CONFIG",
+  "GIT_CONFIG_COUNT",
+  "GIT_CONFIG_PARAMETERS",
+  "GIT_DIR",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+  "GIT_GRAFT_FILE",
+  "GIT_IMPLICIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_NAMESPACE",
+  "GIT_NO_REPLACE_OBJECTS",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_PREFIX",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_SHALLOW_FILE",
+  "GIT_SUPER_PREFIX",
+  "GIT_WORK_TREE",
+]);
+
+function isLocalGitEnvVar(key) {
+  const upper = key.toUpperCase();
+  return LOCAL_GIT_ENV_VARS.has(upper) || /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(upper);
+}
+
+function sanitizedGitEnv(baseEnv = process.env, overrides = {}) {
+  const env = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value !== undefined && !isLocalGitEnvVar(key)) {
+      env[key] = value;
+    }
+  }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete env[key];
+    } else {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+function runFixtureGit(cwd, args, extraEnv = {}) {
+  const outcome = spawnSync("git", args, {
+    cwd,
+    env: sanitizedGitEnv(process.env, extraEnv),
+    encoding: "utf8",
+    timeout: SUBPROCESS_TIMEOUT_MS,
+  });
+  assert.equal(
+    outcome.status,
+    0,
+    outcome.stderr || outcome.error?.message || `git ${args.join(" ")} failed`,
+  );
+  return outcome;
+}
 
 function makeTempDir(t, prefix = "awesome-copilot-svc-wh-") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -460,6 +522,7 @@ test("work-hub config, SQLite/RPC session inventory, repo status ladder, focus s
   const probeSqlite = spawnSync(
     process.execPath,
     [
+      ...SQLITE_EXEC_FLAGS,
       "-e",
       `import("node:sqlite").then(() => process.exit(0), (err) => {
         if (err && (err.code === "ERR_UNKNOWN_BUILTIN_MODULE" || err.code === "MODULE_NOT_FOUND")) {
@@ -506,17 +569,11 @@ test("work-hub config, SQLite/RPC session inventory, repo status ladder, focus s
     ["config", "core.hooksPath", localHooksDir],
     ["remote", "add", "origin", "git@github.com:octo/alpha-app.git"],
   ]) {
-    const gitSetup = spawnSync("git", gitArgs, { cwd: localRepoDir, encoding: "utf8" });
-    assert.equal(gitSetup.status, 0, gitSetup.stderr);
+    runFixtureGit(localRepoDir, gitArgs);
   }
   fs.writeFileSync(path.join(localRepoDir, "README.md"), "# Alpha\n", "utf8");
-  const gitAdd = spawnSync("git", ["add", "README.md"], { cwd: localRepoDir, encoding: "utf8" });
-  assert.equal(gitAdd.status, 0, gitAdd.stderr);
-  const gitCommit = spawnSync("git", ["commit", "-q", "-m", "init"], {
-    cwd: localRepoDir,
-    encoding: "utf8",
-  });
-  assert.equal(gitCommit.status, 0, gitCommit.stderr);
+  runFixtureGit(localRepoDir, ["add", "README.md"]);
+  runFixtureGit(localRepoDir, ["commit", "-q", "-m", "init"]);
   fs.writeFileSync(path.join(localRepoDir, "README.md"), "# Alpha dirty\n", "utf8"); // dirty tracked file
 
   const dataModuleUrl = pathToFileURL(
@@ -868,15 +925,18 @@ assert.equal(renderHtml().includes("<title>Work Hub</title>"), true);
 console.log("WORK_HUB_OK");
 `;
 
-  const childRun = spawnSync(process.execPath, ["--input-type=module", "-e", childDriver], {
-    env: {
-      ...process.env,
-      HOME: fakeHome,
-      USERPROFILE: fakeHome,
+  const childRun = spawnSync(
+    process.execPath,
+    [...SQLITE_EXEC_FLAGS, "--input-type=module", "-e", childDriver],
+    {
+      env: sanitizedGitEnv(process.env, {
+        HOME: fakeHome,
+        USERPROFILE: fakeHome,
+      }),
+      encoding: "utf8",
+      timeout: SUBPROCESS_TIMEOUT_MS,
     },
-    encoding: "utf8",
-    timeout: SUBPROCESS_TIMEOUT_MS,
-  });
+  );
   assert.equal(childRun.status, 0, `stderr:\n${childRun.stderr}\nstdout:\n${childRun.stdout}`);
   assert.match(childRun.stdout, /WORK_HUB_OK/);
 });
@@ -886,7 +946,9 @@ test("release-notes-showcase canvas normalizes release stories, classifies git t
   const origFetch = globalThis.fetch;
   const savedEnv = { ...process.env };
   for (const key of Object.keys(process.env)) {
-    if (key.startsWith("COPILOT_GH_ACCOUNT_")) delete process.env[key];
+    if (key.startsWith("COPILOT_GH_ACCOUNT_") || isLocalGitEnvVar(key)) {
+      delete process.env[key];
+    }
   }
   delete process.env.GITHUB_TOKEN;
   delete process.env.SESSION_ID;
@@ -896,7 +958,9 @@ test("release-notes-showcase canvas normalizes release stories, classifies git t
     for (const key of Object.keys(process.env)) {
       if (!(key in savedEnv)) delete process.env[key];
     }
-    Object.assign(process.env, savedEnv);
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value !== undefined) process.env[key] = value;
+    }
     await releaseNotesShowcaseCanvas.onClose({ instanceId: "rn-1" });
   });
 
@@ -914,12 +978,7 @@ test("release-notes-showcase canvas normalizes release stories, classifies git t
   const repoDir = makeTempDir(t, "rn-git-repo-");
   const repoHooksDir = makeTempDir(t, "rn-git-hooks-");
   const runGitInit = (args, extraEnv = {}) => {
-    const gitOutcome = spawnSync("git", args, {
-      cwd: repoDir,
-      env: { ...process.env, ...extraEnv },
-      encoding: "utf8",
-    });
-    assert.equal(gitOutcome.status, 0, gitOutcome.stderr);
+    runFixtureGit(repoDir, args, extraEnv);
   };
   runGitInit(["init", "-q"]);
   runGitInit(["config", "user.name", "Ada Lovelace"]);
