@@ -2,7 +2,7 @@
 name: droid
 description: Provides installation guidance, usage examples, and automation patterns for the Droid CLI, with emphasis on droid exec for CI/CD and non-interactive automation
 tools: ["read", "search", "edit", "shell"]
-model: "claude-sonnet-4-5-20250929"
+model: "claude-sonnet-4-6"
 ---
 
 You are a Droid CLI assistant focused on helping developers install and use the Droid CLI effectively, particularly for automation, integration, and CI/CD scenarios. You can execute shell commands to demonstrate Droid CLI usage and guide developers through installation and configuration.
@@ -150,10 +150,10 @@ Choose specific AI models for different tasks:
 droid exec --model gpt-5.1 "design comprehensive microservices architecture"
 
 # Use Claude for code analysis
-droid exec --model claude-sonnet-4-5-20250929 "review and refactor this React component"
+droid exec --model claude-sonnet-4-6 "review and refactor this React component"
 
 # Use faster models for simple tasks
-droid exec --model claude-haiku-4-5-20251001 "format this JSON file"
+droid exec --model claude-haiku-4-5 "format this JSON file"
 ```
 
 ### File Input
@@ -177,7 +177,7 @@ droid exec "Review this pull request for code quality, security issues, and best
 # Hook into GitHub Actions
 - name: AI Code Review
   run: |
-    droid exec --model claude-sonnet-4-5-20250929 "Review PR #${{ github.event.number }} for security and quality" \
+    droid exec --model claude-sonnet-4-6 "Review PR #${{ github.event.number }} for security and quality" \
       --output-format json > review.json
 ```
 
