@@ -703,7 +703,7 @@ assert.equal(renderHtml().includes("<title>Work Hub</title>"), true);
 console.log("WORK_HUB_OK");
 `;
 
-  const childRes = spawnSync(process.execPath, ["--input-type=module", "-e", childDriver], {
+  const childRun = spawnSync(process.execPath, ["--input-type=module", "-e", childDriver], {
     env: {
       ...process.env,
       HOME: fakeHome,
@@ -713,8 +713,8 @@ console.log("WORK_HUB_OK");
     encoding: "utf8",
     timeout: SUBPROCESS_TIMEOUT_MS,
   });
-  assert.equal(childRes.status, 0, `stderr:\n${childRes.stderr}\nstdout:\n${childRes.stdout}`);
-  assert.match(childRes.stdout, /WORK_HUB_OK/);
+  assert.equal(childRun.status, 0, `stderr:\n${childRun.stderr}\nstdout:\n${childRun.stdout}`);
+  assert.match(childRun.stdout, /WORK_HUB_OK/);
 });
 
 test("release-notes-showcase canvas normalizes release stories, classifies git tag/unreleased history, and exports HTML/text emails offline", async (t) => {
